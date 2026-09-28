@@ -42,6 +42,8 @@ class EvaluationConditions:
     forget_labels: torch.Tensor
     retain_embeddings: torch.Tensor
     retain_labels: torch.Tensor
+    forget_source_indices: tuple[tuple[int, ...], ...]
+    retain_indices: torch.Tensor
     forget_seeds: tuple[int, ...]
     retain_seeds: tuple[int, ...]
 
@@ -107,17 +109,21 @@ def create_evaluation_conditions(split: ExperimentSplit, config: PIUConfig) -> E
     """Create conditions and seeds reused before and after unlearning."""
     rng = np.random.default_rng(config.seed)
     forget_conditions = []
+    forget_source_indices = []
     for _ in range(config.num_samples):
         num_sources = min(3, len(split.forget_validation.embeddings))
         source_indices = torch.from_numpy(rng.choice(len(split.forget_validation.embeddings), num_sources, replace=False))
         weights = torch.from_numpy(rng.dirichlet(np.ones(num_sources))).to(split.forget_validation.embeddings.dtype)
         forget_conditions.append(F.normalize((split.forget_validation.embeddings[source_indices] * weights.unsqueeze(1)).sum(dim=0), dim=0))
+        forget_source_indices.append(tuple(split.forget_validation.indices[source_indices].tolist()))
     retain_indices = torch.from_numpy(rng.choice(len(split.retain_validation.embeddings), config.num_samples, replace=False))
     return EvaluationConditions(
         forget_embeddings=torch.stack(forget_conditions),
         forget_labels=torch.full((config.num_samples,), split.identity_id, dtype=split.forget_validation.labels.dtype),
         retain_embeddings=split.retain_validation.embeddings[retain_indices],
         retain_labels=split.retain_validation.labels[retain_indices],
+        forget_source_indices=tuple(forget_source_indices),
+        retain_indices=split.retain_validation.indices[retain_indices],
         forget_seeds=tuple(config.seed + index for index in range(config.num_samples)),
         retain_seeds=tuple(config.seed + 100_000 + index for index in range(config.num_samples)),
     )
@@ -131,6 +137,8 @@ def save_evaluation_conditions(conditions: EvaluationConditions, path: Path) -> 
         forget_labels=conditions.forget_labels.numpy(),
         retain_embeddings=conditions.retain_embeddings.numpy(),
         retain_labels=conditions.retain_labels.numpy(),
+        forget_source_indices=np.asarray(conditions.forget_source_indices, dtype=np.int64),
+        retain_indices=conditions.retain_indices.numpy(),
         forget_seeds=np.asarray(conditions.forget_seeds, dtype=np.int64),
         retain_seeds=np.asarray(conditions.retain_seeds, dtype=np.int64),
     )
@@ -151,7 +159,7 @@ def write_split_manifest(split: ExperimentSplit, path: Path) -> None:
 
 def create_embedding_loaders(split: ExperimentSplit, config: PIUConfig) -> tuple[DataLoader[torch.Tensor], DataLoader[torch.Tensor]]:
     forget_dataset = DirichletEmbeddingDataset(split.forget_train.embeddings)
-    num_samples = config.training_steps * config.batch_size
+    num_samples = config.training_steps * config.gradient_accumulation_steps * config.batch_size
     forget_sampler = RandomSampler(forget_dataset, replacement=True, num_samples=num_samples, generator=torch.Generator().manual_seed(config.seed))
     retain_sampler = RandomSampler(split.retain_train.embeddings, replacement=True, num_samples=num_samples, generator=torch.Generator().manual_seed(config.seed + 1))
     forget_loader = DataLoader(forget_dataset, batch_size=config.batch_size, sampler=forget_sampler)
@@ -159,7 +167,7 @@ def create_embedding_loaders(split: ExperimentSplit, config: PIUConfig) -> tuple
     return forget_loader, retain_loader
 
 
-def select_anchor_embedding(split: ExperimentSplit, config: PIUConfig) -> torch.Tensor:
+def select_anchor_embedding(split: ExperimentSplit, config: PIUConfig) -> tuple[torch.Tensor, int, float]:
     """Select a retained identity centroid from the configured proximity band."""
     embeddings = split.retain_train.embeddings
     labels = split.retain_train.labels
@@ -173,5 +181,6 @@ def select_anchor_embedding(split: ExperimentSplit, config: PIUConfig) -> torch.
         anchor_id = config.anchor_overrides[config.identity_id][config.proximity_threshold]
         selected_index = torch.where(retain_labels == anchor_id)[0].item()
     else:
-        selected_index = candidate_indices[torch.randint(candidate_indices.numel(), (), generator=torch.Generator().manual_seed(config.seed))]
-    return retain_centroids[selected_index]
+        selected_index = candidate_indices[torch.randint(candidate_indices.numel(), (), generator=torch.Generator().manual_seed(config.seed))].item()
+        anchor_id = int(retain_labels[selected_index])
+    return retain_centroids[selected_index], int(anchor_id), float(similarities[selected_index])

@@ -31,6 +31,7 @@ def train_piu(
     device: torch.device,
     output_dir: Path,
     training_steps: int,
+    gradient_accumulation_steps: int,
     learning_rate: float,
     weight_decay: float,
     log_every: int,
@@ -41,14 +42,19 @@ def train_piu(
     retain_batches = batches_forever(retain_loader)
     for step in range(1, training_steps + 1):
         optimizer.zero_grad(set_to_none=True)
-        loss, forget_loss, preserve_loss = piu.compute_piu_loss(next(forget_batches), next(retain_batches), anchor_conditioning, trainable_unet, frozen_unet, scheduler, identity_conditioner, device)
-        loss.backward()
+        total_loss = total_forget_loss = total_preserve_loss = 0.0
+        for _ in range(gradient_accumulation_steps):
+            loss, forget_loss, preserve_loss = piu.compute_piu_loss(next(forget_batches), next(retain_batches), anchor_conditioning, trainable_unet, frozen_unet, scheduler, identity_conditioner, device)
+            (loss / gradient_accumulation_steps).backward()
+            total_loss += loss.item() / gradient_accumulation_steps
+            total_forget_loss += forget_loss.item() / gradient_accumulation_steps
+            total_preserve_loss += preserve_loss.item() / gradient_accumulation_steps
         optimizer.step()
 
         if step == 1 or step % log_every == 0 or step == training_steps:
-            print(f"step={step:04d} loss={loss.item():.6f} forget={forget_loss.item():.6f} preserve={preserve_loss.item():.6f}")
+            print(f"step={step:04d}/{training_steps:04d} loss={total_loss:.6f} forget={total_forget_loss:.6f} preserve={total_preserve_loss:.6f}", flush=True)
 
     output_dir.mkdir(parents=True, exist_ok=True)
     checkpoint_path = output_dir / "piu_unet.pt"
-    torch.save({"unet_state_dict": trainable_unet.state_dict(), "optimizer_state_dict": optimizer.state_dict(), "training_steps": training_steps, "preservation_weight": piu.preservation_weight, "negative_guidance_scale": piu.negative_guidance_scale}, checkpoint_path)
+    torch.save({"unet_state_dict": trainable_unet.state_dict(), "optimizer_state_dict": optimizer.state_dict(), "training_steps": training_steps, "gradient_accumulation_steps": gradient_accumulation_steps, "preservation_weight": piu.preservation_weight, "negative_guidance_scale": piu.negative_guidance_scale}, checkpoint_path)
     return checkpoint_path

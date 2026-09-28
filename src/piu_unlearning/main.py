@@ -35,7 +35,9 @@ def unlearn_identity(model: StableDiffusionPipeline, split: ExperimentSplit, con
     torch.manual_seed(config.seed)
     device = torch.device(config.device)
     forget_loader, retain_loader = create_embedding_loaders(split, config)
-    anchor_embedding = select_anchor_embedding(split, config).unsqueeze(0).to(device)
+    anchor_embedding, anchor_id, anchor_similarity = select_anchor_embedding(split, config)
+    print(f"Selected anchor identity: {anchor_id} (cosine similarity {anchor_similarity:.6f})", flush=True)
+    anchor_embedding = anchor_embedding.unsqueeze(0).to(device)
     identity_conditioner = Arc2FaceIdentityConditioner(model.tokenizer, model.text_encoder)
     with torch.no_grad():
         anchor_conditioning = identity_conditioner.encode(anchor_embedding)
@@ -55,6 +57,7 @@ def unlearn_identity(model: StableDiffusionPipeline, split: ExperimentSplit, con
         device=device,
         output_dir=config.output_dir / "checkpoints",
         training_steps=config.training_steps,
+        gradient_accumulation_steps=config.gradient_accumulation_steps,
         learning_rate=config.learning_rate,
         weight_decay=config.weight_decay,
         log_every=config.log_every,
@@ -64,19 +67,33 @@ def unlearn_identity(model: StableDiffusionPipeline, split: ExperimentSplit, con
 def run_demo(config: PIUConfig) -> PIUResult:
     before_dir = config.output_dir / "before"
     after_dir = config.output_dir / "after"
+    print(f"PIU demo for identity {config.identity_id}", flush=True)
+    print("[1/6] Preparing canonical data splits and evaluation conditions", flush=True)
     embeddings, labels, centroids, centroid_labels = load_prepared_data(config)
     split = create_experiment_split(embeddings, labels, centroids, centroid_labels, config)
     conditions = create_evaluation_conditions(split, config)
     write_split_manifest(split, config.output_dir / "split.json")
     save_evaluation_conditions(conditions, config.output_dir / "evaluation_conditions.npz")
+    print(f"Forget train dataset indices ({len(split.forget_train.indices)}): {split.forget_train.indices.tolist()}", flush=True)
+    print(f"Forget validation dataset indices ({len(split.forget_validation.indices)}): {split.forget_validation.indices.tolist()}", flush=True)
+    print(f"Retain split: {len(split.retain_train.indices)} training rows, {len(split.retain_validation.indices)} validation rows", flush=True)
+    print(f"Evaluation forget source indices: {list(conditions.forget_source_indices)}", flush=True)
+    print(f"Evaluation retain indices: {conditions.retain_indices.tolist()}", flush=True)
+    print(f"Complete split manifest: {config.output_dir / 'split.json'}", flush=True)
+    print(f"[2/6] Loading Arc2Face on {config.device}", flush=True)
     model = load_arc2face(config)
-    before_images = generate_evaluation_samples(model, conditions, config, before_dir)
+    print(f"[3/6] Generating baseline samples ({config.num_samples} forget, {config.num_samples} retain)", flush=True)
+    before_images = generate_evaluation_samples(model, conditions, config, before_dir, "Baseline")
+    print(f"[4/6] Training PIU ({config.training_steps} optimizer steps, micro-batch {config.batch_size}, accumulation {config.gradient_accumulation_steps}, effective batch {config.batch_size * config.gradient_accumulation_steps})", flush=True)
     checkpoint_path = unlearn_identity(model, split, config)
-    after_images = generate_evaluation_samples(model, conditions, config, after_dir)
+    print(f"[5/6] Generating post-unlearning samples ({config.num_samples} forget, {config.num_samples} retain)", flush=True)
+    after_images = generate_evaluation_samples(model, conditions, config, after_dir, "Post-unlearning")
+    print("[6/6] Extracting face embeddings and computing evaluation metrics", flush=True)
     evaluation = evaluate_before_after(before_images, after_images, conditions, split, config)
     result = PIUResult(identity_id=config.identity_id, checkpoint_path=checkpoint_path, before_images=before_images, after_images=after_images, evaluation=evaluation)
     write_summary(result, config.output_dir / "summary.json")
     print_comparison(result)
+    print(f"Finished. Results written to {config.output_dir}", flush=True)
     return result
 
 

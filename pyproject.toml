@@ -22,13 +22,13 @@ dependencies = [
     "insightface==0.7.3",
     "onnxruntime-gpu==1.23.2; platform_system != 'Darwin'",
     "onnxruntime==1.23.2; platform_system == 'Darwin'",
+    "tqdm>=4.66",
 ]
 
 [project.optional-dependencies]
 data = [
     "pyarrow>=14",
     "scikit-learn==1.7.2",
-    "tqdm>=4.66",
 ]
 
 [project.scripts]

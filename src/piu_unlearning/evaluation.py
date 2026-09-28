@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 import torch
 import torch.nn.functional as F
+from tqdm.auto import tqdm
 
 from piu_unlearning.models.arcface import ArcFaceExtractor
 
@@ -41,11 +42,11 @@ class EvaluationReport:
     after: PhaseMetrics
 
 
-def extract_face_embeddings(image_paths: list[Path], extractor: ArcFaceExtractor) -> torch.Tensor:
+def extract_face_embeddings(image_paths: list[Path], extractor: ArcFaceExtractor, description: str) -> torch.Tensor:
     from PIL import Image
 
     embeddings = []
-    for image_path in image_paths:
+    for image_path in tqdm(image_paths, desc=description, unit="image"):
         embedding = extractor(np.asarray(Image.open(image_path).convert("RGB")))
         if embedding is None:
             raise RuntimeError(f"No face detected in generated image: {image_path}")
@@ -68,9 +69,9 @@ def compute_srk(forget_embeddings: torch.Tensor, forget_labels: torch.Tensor, re
     return SRKMetrics(forget_accuracy=forget_accuracy, retain_accuracy=retain_accuracy, score=retain_accuracy / (forget_accuracy + epsilon))
 
 
-def evaluate_phase(samples: GeneratedSamples, conditions: EvaluationConditions, split: ExperimentSplit, extractor: ArcFaceExtractor) -> PhaseMetrics:
-    forget_embeddings = extract_face_embeddings(samples.forget, extractor)
-    retain_embeddings = extract_face_embeddings(samples.retain, extractor)
+def evaluate_phase(samples: GeneratedSamples, conditions: EvaluationConditions, split: ExperimentSplit, extractor: ArcFaceExtractor, phase: str) -> PhaseMetrics:
+    forget_embeddings = extract_face_embeddings(samples.forget, extractor, f"{phase}: forget embeddings")
+    retain_embeddings = extract_face_embeddings(samples.retain, extractor, f"{phase}: retain embeddings")
     forget = SplitMetrics(ism=compute_ism(forget_embeddings, conditions.forget_labels, split.centroids, split.centroid_labels))
     retain = SplitMetrics(ism=compute_ism(retain_embeddings, conditions.retain_labels, split.centroids, split.centroid_labels))
     srk = compute_srk(forget_embeddings, conditions.forget_labels, retain_embeddings, conditions.retain_labels, split.centroids, split.centroid_labels)
@@ -80,4 +81,4 @@ def evaluate_phase(samples: GeneratedSamples, conditions: EvaluationConditions, 
 def evaluate_before_after(before: GeneratedSamples, after: GeneratedSamples, conditions: EvaluationConditions, split: ExperimentSplit, config: PIUConfig) -> EvaluationReport:
     """Evaluate aligned samples from the original and unlearned models."""
     extractor = ArcFaceExtractor(config.embeddings_path.parent / "face_models", config.device)
-    return EvaluationReport(before=evaluate_phase(before, conditions, split, extractor), after=evaluate_phase(after, conditions, split, extractor))
+    return EvaluationReport(before=evaluate_phase(before, conditions, split, extractor, "Baseline evaluation"), after=evaluate_phase(after, conditions, split, extractor, "Post-unlearning evaluation"))

@@ -30,7 +30,8 @@ class PIUConfig:
     seed: int = 42
     forget_validation_ratio: float = 0.35
     retain_validation_ratio: float = 0.10
-    batch_size: int = 32
+    batch_size: int = 16
+    gradient_accumulation_steps: int = 2
     training_steps: int = 400
     learning_rate: float = 1e-4
     weight_decay: float = 0.01
@@ -71,6 +72,7 @@ def parse_config() -> PIUConfig:
     parser.add_argument("--forget-validation-ratio", type=float, default=PIUConfig.forget_validation_ratio)
     parser.add_argument("--retain-validation-ratio", type=float, default=PIUConfig.retain_validation_ratio)
     parser.add_argument("--batch-size", type=int, default=PIUConfig.batch_size)
+    parser.add_argument("--gradient-accumulation-steps", type=int, default=PIUConfig.gradient_accumulation_steps)
     parser.add_argument("--training-steps", type=int, default=PIUConfig.training_steps)
     parser.add_argument("--learning-rate", type=float, default=PIUConfig.learning_rate)
     parser.add_argument("--weight-decay", type=float, default=PIUConfig.weight_decay)

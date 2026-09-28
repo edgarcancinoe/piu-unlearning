@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 import torch
 import torch.nn.functional as F
+from tqdm.auto import tqdm
 
 if TYPE_CHECKING:
     from piu_unlearning.models.arc2face_text_encoder import CLIPTextModelWrapper
@@ -59,14 +60,14 @@ def load_arc2face(config: PIUConfig) -> StableDiffusionPipeline:
 
 
 @torch.no_grad()
-def generate_conditioned_samples(model: StableDiffusionPipeline, embeddings: torch.Tensor, seeds: tuple[int, ...], config: PIUConfig, output_dir: Path) -> list[Path]:
+def generate_conditioned_samples(model: StableDiffusionPipeline, embeddings: torch.Tensor, seeds: tuple[int, ...], config: PIUConfig, output_dir: Path, description: str) -> list[Path]:
     """Generate one image for each identity embedding and seed."""
     identity_conditioner = Arc2FaceIdentityConditioner(model.tokenizer, model.text_encoder)
     identity_conditioning = identity_conditioner.encode(embeddings.to(model.device))
     output_dir.mkdir(parents=True, exist_ok=True)
     model.unet.eval()
     image_paths = []
-    for index, seed in enumerate(seeds):
+    for index, seed in enumerate(tqdm(seeds, desc=description, unit="image")):
         generator = torch.Generator(device=model.device).manual_seed(seed)
         image = model(prompt_embeds=identity_conditioning[index : index + 1], num_inference_steps=config.num_inference_steps, guidance_scale=config.guidance_scale, output_type="pil", generator=generator).images[0]
         image_path = output_dir / f"{index:04d}.png"
@@ -75,8 +76,8 @@ def generate_conditioned_samples(model: StableDiffusionPipeline, embeddings: tor
     return image_paths
 
 
-def generate_evaluation_samples(model: StableDiffusionPipeline, conditions: EvaluationConditions, config: PIUConfig, output_dir: Path) -> GeneratedSamples:
+def generate_evaluation_samples(model: StableDiffusionPipeline, conditions: EvaluationConditions, config: PIUConfig, output_dir: Path, phase: str) -> GeneratedSamples:
     """Generate the forget and retain images for one evaluation phase."""
-    forget = generate_conditioned_samples(model, conditions.forget_embeddings, conditions.forget_seeds, config, output_dir / "forget")
-    retain = generate_conditioned_samples(model, conditions.retain_embeddings, conditions.retain_seeds, config, output_dir / "retain")
+    forget = generate_conditioned_samples(model, conditions.forget_embeddings, conditions.forget_seeds, config, output_dir / "forget", f"{phase}: forget")
+    retain = generate_conditioned_samples(model, conditions.retain_embeddings, conditions.retain_seeds, config, output_dir / "retain", f"{phase}: retain")
     return GeneratedSamples(forget=forget, retain=retain)
