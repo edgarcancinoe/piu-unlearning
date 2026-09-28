@@ -10,26 +10,27 @@ The repository contains:
 - Data preparation tools to download the published embeddings or recompute them from CelebA-HQ images.
 - A before/after demo with identity evaluation, training curves, and result visualization.
 
-## Qualitative results
+### PIU unlearning
 
 <p align="center">
-  <img src="assets/piu_identity_unlearning.png" alt="Three PIU examples showing the target identity, selected anchor identity, and generated identity after unlearning." width="560">
+  <img src="assets/piu_identity_unlearning.png" alt="Three PIU examples showing the target identity, selected anchor identity, and generated identity after unlearning." width="480">
 </p>
 
 PIU examples: target identity (left), selected anchor (middle), and generation after unlearning (right).
 
-![Retained identities before and after PIU unlearning](assets/piu_retained_identities.png)
-
+<p align="center">
+  <img src="assets/piu_retained_identities.png" alt="Retained identities before and after PIU unlearning." width="720">
+</p>
+    
 Retained identities before (top) and after (bottom) unlearning a target identity. These examples illustrate preservation of identities outside the forget set.
 
 ## Install
 
-Run from the repository root. The locked environment targets Linux with an NVIDIA GPU and CUDA support.
+Run from the repository root. The environment targets Linux with an NVIDIA GPU and CUDA support.
 
 ```bash
 conda create --name piu python=3.10 pip -y
 conda activate piu
-export PYTHONNOUSERSITE=1
 python -m pip install --upgrade pip setuptools wheel
 python -m pip install -r requirements-lock.txt
 python -m pip install --no-deps -e .
