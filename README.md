@@ -5,10 +5,11 @@
 Use Linux x86-64 with Python 3.10, CUDA 12.4, and an NVIDIA GPU.
 
 ```bash
-python3.10 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements-lock.txt
-pip install --no-deps -e .
+conda create --name piu python=3.10 pip -y
+conda activate piu
+python -m pip install --upgrade pip setuptools wheel
+python -m pip install -r requirements-lock.txt
+python -m pip install --no-deps .
 ```
 
 ## Prepare the data

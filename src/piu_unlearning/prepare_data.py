@@ -110,15 +110,17 @@ def sha256(path: Path) -> str:
 
 def cluster_embeddings(output_dir: Path, revision: str, eps: float, min_samples: int) -> None:
     from sklearn.cluster import DBSCAN
+    from sklearn.metrics import adjusted_rand_score
 
     embeddings = np.load(output_dir / "embeddings.npy").astype(np.float32)
     embeddings /= np.linalg.norm(embeddings, axis=1, keepdims=True) + 1e-8
     published_labels = np.load(output_dir / "published_labels.npy")
-    labels = assign_singleton_labels(DBSCAN(metric="cosine", eps=eps, min_samples=min_samples).fit_predict(embeddings))
+    recomputed_labels = assign_singleton_labels(DBSCAN(metric="cosine", eps=eps, min_samples=min_samples).fit_predict(embeddings))
+    adjusted_rand = adjusted_rand_score(published_labels, recomputed_labels)
+    if adjusted_rand != 1.0:
+        raise RuntimeError(f"Recomputed clustering differs from the published partition (adjusted Rand index: {adjusted_rand:.8f})")
+    labels = published_labels.astype(np.int64)
     centroids, centroid_labels, cluster_sizes = compute_centroids(embeddings, labels)
-    if not np.array_equal(labels, published_labels):
-        matches = int((labels == published_labels).sum())
-        raise RuntimeError(f"Recomputed labels match {matches}/{len(labels)} published labels")
     if len(labels) != EXPECTED_ROWS or len(centroid_labels) != EXPECTED_IDENTITIES:
         raise RuntimeError(f"Expected {EXPECTED_ROWS} rows and {EXPECTED_IDENTITIES} identities, found {len(labels)} and {len(centroid_labels)}")
     np.save(output_dir / "labels.npy", labels)
@@ -129,10 +131,10 @@ def cluster_embeddings(output_dir: Path, revision: str, eps: float, min_samples:
     metadata = {
         "dataset": {"repo": DATASET_REPO, "revision": revision},
         "extractor": {"detector": f"{DETECTOR_REPO}/{DETECTOR_FILE}", "detector_revision": DETECTOR_REVISION, "recognizer": f"{RECOGNIZER_REPO}/{RECOGNIZER_FILE}", "recognizer_revision": RECOGNIZER_REVISION, "det_size": DET_SIZE, "det_thresh": DET_THRESH},
-        "clustering": {"algorithm": "DBSCAN", "metric": "cosine", "eps": eps, "min_samples": min_samples, "noise_policy": "singleton"},
+        "clustering": {"algorithm": "DBSCAN", "metric": "cosine", "eps": eps, "min_samples": min_samples, "noise_policy": "singleton", "adjusted_rand_index": adjusted_rand},
         "num_rows": len(labels),
         "num_identities": len(centroid_labels),
-        "published_labels_match": True,
+        "published_partition_match": True,
         "sha256": {name: sha256(output_dir / name) for name in artifacts},
     }
     (output_dir / "metadata.json").write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
