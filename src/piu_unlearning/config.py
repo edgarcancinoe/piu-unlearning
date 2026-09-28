@@ -41,6 +41,8 @@ class PIUConfig:
     anchor_tolerance: float = 1e-2
     anchor_overrides: dict[int, dict[float, int]] | None = None
     log_every: int = 10
+    evaluation_every: int = 50
+    evaluation_device: str = "cpu"
     num_samples: int = 25
     num_inference_steps: int = 25
     guidance_scale: float = 3.0
@@ -83,6 +85,8 @@ def parse_config() -> PIUConfig:
     parser.add_argument("--anchor-tolerance", type=float, default=PIUConfig.anchor_tolerance)
     parser.add_argument("--use-anchor-overrides", action="store_true", help="Replay the recorded CelebA-HQ anchor selections.")
     parser.add_argument("--log-every", type=int, default=PIUConfig.log_every)
+    parser.add_argument("--evaluation-every", type=int, default=PIUConfig.evaluation_every, help="Run ISM evaluation every N optimizer steps; 0 disables it.")
+    parser.add_argument("--evaluation-device", default=PIUConfig.evaluation_device)
     parser.add_argument("--num-samples", type=int, default=PIUConfig.num_samples)
     parser.add_argument("--num-inference-steps", type=int, default=PIUConfig.num_inference_steps)
     parser.add_argument("--guidance-scale", type=float, default=PIUConfig.guidance_scale)

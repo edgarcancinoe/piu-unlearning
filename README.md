@@ -10,7 +10,7 @@ conda activate piu
 export PYTHONNOUSERSITE=1
 python -m pip install --upgrade pip setuptools wheel
 python -m pip install -r requirements-lock.txt
-python -m pip install --no-deps .
+python -m pip install --no-deps -e .
 ```
 
 ## Prepare the paper data
@@ -28,6 +28,8 @@ piu-demo --identity-id 512 --data-dir data/celebahq_512 --use-anchor-overrides
 ```
 
 Results are written to `outputs/demo`.
+The resolved defaults and command-line overrides are recorded in `outputs/demo/config.json`.
+ISM is evaluated every 50 optimizer steps by default; use `--evaluation-every 0` to disable it or pass another interval.
 
 ## Independently recompute the data
 

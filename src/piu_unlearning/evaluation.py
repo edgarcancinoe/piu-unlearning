@@ -10,11 +10,12 @@ import torch.nn.functional as F
 from tqdm.auto import tqdm
 
 from piu_unlearning.models.arcface import ArcFaceExtractor
+from piu_unlearning.models.arc2face import GeneratedSamples, generate_evaluation_samples
 
 if TYPE_CHECKING:
     from piu_unlearning.config import PIUConfig
     from piu_unlearning.data import EvaluationConditions, ExperimentSplit
-    from piu_unlearning.models.arc2face import GeneratedSamples
+    from diffusers import StableDiffusionPipeline
 
 
 @dataclass(frozen=True)
@@ -78,7 +79,14 @@ def evaluate_phase(samples: GeneratedSamples, conditions: EvaluationConditions, 
     return PhaseMetrics(forget=forget, retain=retain, srk=srk)
 
 
+def evaluate_training_ism(model: StableDiffusionPipeline, conditions: EvaluationConditions, split: ExperimentSplit, config: PIUConfig, extractor: ArcFaceExtractor, output_dir: Path, step: int) -> tuple[float, float]:
+    """Generate fixed validation conditions and return forget and retain ISM at one training step."""
+    samples = generate_evaluation_samples(model, conditions, config, output_dir / f"step_{step:04d}", f"ISM step {step}")
+    metrics = evaluate_phase(samples, conditions, split, extractor, f"ISM step {step}")
+    return metrics.forget.ism, metrics.retain.ism
+
+
 def evaluate_before_after(before: GeneratedSamples, after: GeneratedSamples, conditions: EvaluationConditions, split: ExperimentSplit, config: PIUConfig) -> EvaluationReport:
     """Evaluate aligned samples from the original and unlearned models."""
-    extractor = ArcFaceExtractor(config.embeddings_path.parent / "face_models", config.device)
+    extractor = ArcFaceExtractor(config.embeddings_path.parent / "face_models", config.evaluation_device)
     return EvaluationReport(before=evaluate_phase(before, conditions, split, extractor, "Baseline evaluation"), after=evaluate_phase(after, conditions, split, extractor, "Post-unlearning evaluation"))
