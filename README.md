@@ -10,6 +10,18 @@ The repository contains:
 - Data preparation tools to download the published embeddings or recompute them from CelebA-HQ images.
 - A before/after demo with identity evaluation, training curves, and result visualization.
 
+## Qualitative results
+
+<p align="center">
+  <img src="assets/piu_identity_unlearning.png" alt="Three PIU examples showing the target identity, selected anchor identity, and generated identity after unlearning." width="560">
+</p>
+
+PIU examples: target identity (left), selected anchor (middle), and generation after unlearning (right).
+
+![Retained identities before and after PIU unlearning](assets/piu_retained_identities.png)
+
+Retained identities before (top) and after (bottom) unlearning a target identity. These examples illustrate preservation of identities outside the forget set.
+
 ## Install
 
 Run from the repository root. The locked environment targets Linux with an NVIDIA GPU and CUDA support.
@@ -74,6 +86,10 @@ piu-demo --identity-id YOUR_ID --data-dir data/celebahq_512_recomputed --output-
 Results are written to `outputs/demo` unless `--output-dir` is set. Each run saves the resolved configuration, data split, U-Net checkpoint, before/after images, and evaluation metrics. Training curves and aligned comparison grids are saved under `summary/`.
 
 Identity similarity (ISM) is evaluated every 50 optimizer steps by default. Use `--evaluation-every 0` to disable intermediate evaluation, or pass another interval. See `piu-demo --help` for the remaining options.
+
+## License and acknowledgments
+
+PIU code is released under the [MIT License](LICENSE). This implementation builds on [Arc2Face](https://github.com/FoivosPar/Arc2Face) and uses InsightFace for face embeddings. The [Arc2Face license](src/piu_unlearning/models/ARC2FACE_LICENSE) is included for the adapted code. Pretrained models and datasets remain subject to their respective licenses and terms of use.
 
 ## Citation
 
