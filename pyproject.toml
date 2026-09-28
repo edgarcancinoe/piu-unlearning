@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "piu-unlearning"
+version = "0.0.0"
+description = "Proximity-guided identity unlearning for ID-conditioned diffusion models"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE", "src/piu_unlearning/models/ARC2FACE_LICENSE"]
+requires-python = ">=3.10,<3.13"
+dependencies = [
+    "torch~=2.4.1",
+    "diffusers==0.29.2",
+    "transformers==4.45.2",
+    "accelerate~=1.0.1",
+    "safetensors~=0.4.5",
+    "huggingface-hub>=0.23.2,<1.0",
+    "numpy>=1.23.5,<2",
+    "pillow>=10",
+    "insightface==0.7.3",
+    "onnxruntime-gpu==1.23.2; platform_system != 'Darwin'",
+    "onnxruntime==1.23.2; platform_system == 'Darwin'",
+]
+
+[project.optional-dependencies]
+data = [
+    "pyarrow>=14",
+    "scikit-learn==1.7.2",
+    "tqdm>=4.66",
+]
+
+[project.scripts]
+piu-demo = "piu_unlearning.main:main"
+piu-prepare-data = "piu_unlearning.prepare_data:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+piu_unlearning = ["models/ARC2FACE_LICENSE"]

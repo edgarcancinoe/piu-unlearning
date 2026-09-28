@@ -1,0 +1,45 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Environments and local configuration
+.venv/
+venv/
+.env
+.env.*
+!.env.example
+
+# Editors and operating systems
+.idea/
+.vscode/
+*.code-workspace
+.DS_Store
+
+# Data, models, caches, and experiment artifacts
+/data/
+/datasets/
+/models/
+checkpoints/
+outputs/
+results/
+logs/
+wandb/
+.cache/
+*.ckpt
+*.onnx
+*.pt
+*.pth
+*.safetensors
+
+# Local scheduler and cluster artifacts
+*.err
+*.out
+slurm-*.log
