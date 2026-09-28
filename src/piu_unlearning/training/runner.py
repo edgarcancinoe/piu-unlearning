@@ -43,7 +43,10 @@ def train_piu(
     trainable_unet.train()
     output_dir.mkdir(parents=True, exist_ok=True)
     optimizer = torch.optim.AdamW((parameter for parameter in trainable_unet.parameters() if parameter.requires_grad), lr=learning_rate, weight_decay=weight_decay)
+    loss_history_path = output_dir / "loss_history.jsonl"
     ism_history_path = output_dir / "ism_history.jsonl"
+    loss_history_path.write_text("", encoding="utf-8")
+    if evaluation_every: ism_history_path.write_text("", encoding="utf-8")
     forget_batches = batches_forever(forget_loader)
     retain_batches = batches_forever(retain_loader)
     with tqdm(total=training_steps * gradient_accumulation_steps, desc="Training PIU", unit="microbatch", dynamic_ncols=True) as progress:
@@ -59,6 +62,7 @@ def train_piu(
                 progress.set_postfix(step=f"{step}/{training_steps}", micro=f"{micro_step}/{gradient_accumulation_steps}", loss=f"{loss.item():.4f}", forget=f"{forget_loss.item():.4f}", preserve=f"{preserve_loss.item():.4f}")
                 progress.update()
             optimizer.step()
+            with loss_history_path.open("a", encoding="utf-8") as history: history.write(json.dumps({"step": step, "loss": total_loss, "forget_loss": total_forget_loss, "preserve_loss": total_preserve_loss}) + "\n")
 
             if evaluate_ism is not None and evaluation_every and step % evaluation_every == 0:
                 progress.set_description("Evaluating ISM")

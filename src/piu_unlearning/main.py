@@ -15,6 +15,7 @@ from piu_unlearning.models.arcface import ArcFaceExtractor
 from piu_unlearning.models.arc2face import Arc2FaceIdentityConditioner, GeneratedSamples, generate_evaluation_samples, load_arc2face, load_generated_samples
 from piu_unlearning.training.losses import PIU
 from piu_unlearning.training.runner import train_piu
+from piu_unlearning.visualization import create_summary_visuals
 
 if TYPE_CHECKING:
     from diffusers import StableDiffusionPipeline
@@ -104,8 +105,10 @@ def run_demo(config: PIUConfig) -> PIUResult:
     print("[6/6] Extracting face embeddings and computing evaluation metrics", flush=True)
     evaluation = evaluate_before_after(before_images, after_images, conditions, split, config)
     result = PIUResult(identity_id=config.identity_id, checkpoint_path=checkpoint_path, before_images=before_images, after_images=after_images, evaluation=evaluation)
+    curves_path, grid_path = create_summary_visuals(before_images, after_images, conditions, config.output_dir)
     write_summary(result, config.output_dir / "summary.json")
     print_comparison(result)
+    print(f"Summary visuals: {curves_path}, {grid_path}", flush=True)
     print(f"Finished. Results written to {config.output_dir}", flush=True)
     return result
 
