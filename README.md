@@ -2,6 +2,8 @@
 
 Official implementation of [PIU: Proximity-guided Identity Unlearning in ID-Conditioned Diffusion Models](https://arxiv.org/abs/2605.22311), IJCB 2026.
 
+[Paper](https://arxiv.org/abs/2605.22311) | [Poster (PDF)](https://edgarcancinoe.github.io/projects/piu/PIU_poster.pdf)
+
 PIU unlearns a target identity in Arc2Face by redirecting it toward an anchor identity selected in the ArcFace embedding space, while preserving other identities.
 
 The repository contains:
@@ -13,13 +15,13 @@ The repository contains:
 ### PIU unlearning
 
 <p align="center">
-  <img src="assets/piu_identity_unlearning.png" alt="Three PIU examples showing the target identity, selected anchor identity, and generated identity after unlearning." width="480">
+  <img src="assets/piu_identity_unlearning.webp" alt="Three PIU examples showing the target identity, selected anchor identity, and generated identity after unlearning." width="480">
 </p>
 
 PIU examples: target identity (left), selected anchor (middle), and generation after unlearning (right).
 
 <p align="center">
-  <img src="assets/piu_retained_identities.png" alt="Retained identities before and after PIU unlearning." width="720">
+  <img src="assets/piu_retained_identities.webp" alt="Retained identities before and after PIU unlearning." width="720">
 </p>
     
 Retained identities before (top) and after (bottom) unlearning a target identity. These examples illustrate preservation of identities outside the forget set.
