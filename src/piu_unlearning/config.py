@@ -44,6 +44,7 @@ class PIUConfig:
     num_samples: int = 25
     num_inference_steps: int = 25
     guidance_scale: float = 3.0
+    reuse_baseline: bool = False
 
     @property
     def embeddings_path(self) -> Path: return self.data_dir / "embeddings.npy"
@@ -85,6 +86,7 @@ def parse_config() -> PIUConfig:
     parser.add_argument("--num-samples", type=int, default=PIUConfig.num_samples)
     parser.add_argument("--num-inference-steps", type=int, default=PIUConfig.num_inference_steps)
     parser.add_argument("--guidance-scale", type=float, default=PIUConfig.guidance_scale)
+    parser.add_argument("--reuse-baseline", action="store_true", help="Reuse baseline images already present in OUTPUT_DIR/before.")
     values = vars(parser.parse_args())
     use_anchor_overrides = values.pop("use_anchor_overrides")
     values["anchor_overrides"] = CELEBAHQ_512_ANCHOR_OVERRIDES if use_anchor_overrides else None

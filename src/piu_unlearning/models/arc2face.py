@@ -81,3 +81,8 @@ def generate_evaluation_samples(model: StableDiffusionPipeline, conditions: Eval
     forget = generate_conditioned_samples(model, conditions.forget_embeddings, conditions.forget_seeds, config, output_dir / "forget", f"{phase}: forget")
     retain = generate_conditioned_samples(model, conditions.retain_embeddings, conditions.retain_seeds, config, output_dir / "retain", f"{phase}: retain")
     return GeneratedSamples(forget=forget, retain=retain)
+
+
+def load_generated_samples(output_dir: Path, num_samples: int) -> GeneratedSamples:
+    """Reference an existing complete set of generated forget and retain images."""
+    return GeneratedSamples(forget=[output_dir / "forget" / f"{index:04d}.png" for index in range(num_samples)], retain=[output_dir / "retain" / f"{index:04d}.png" for index in range(num_samples)])

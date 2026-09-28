@@ -11,7 +11,7 @@ import torch
 from piu_unlearning.config import PIUConfig, parse_config
 from piu_unlearning.data import ExperimentSplit, create_embedding_loaders, create_evaluation_conditions, create_experiment_split, load_prepared_data, save_evaluation_conditions, select_anchor_embedding, write_split_manifest
 from piu_unlearning.evaluation import EvaluationReport, evaluate_before_after
-from piu_unlearning.models.arc2face import Arc2FaceIdentityConditioner, GeneratedSamples, generate_evaluation_samples, load_arc2face
+from piu_unlearning.models.arc2face import Arc2FaceIdentityConditioner, GeneratedSamples, generate_evaluation_samples, load_arc2face, load_generated_samples
 from piu_unlearning.training.losses import PIU
 from piu_unlearning.training.runner import train_piu
 
@@ -82,8 +82,12 @@ def run_demo(config: PIUConfig) -> PIUResult:
     print(f"Complete split manifest: {config.output_dir / 'split.json'}", flush=True)
     print(f"[2/6] Loading Arc2Face on {config.device}", flush=True)
     model = load_arc2face(config)
-    print(f"[3/6] Generating baseline samples ({config.num_samples} forget, {config.num_samples} retain)", flush=True)
-    before_images = generate_evaluation_samples(model, conditions, config, before_dir, "Baseline")
+    if config.reuse_baseline:
+        print(f"[3/6] Reusing baseline samples from {before_dir}", flush=True)
+        before_images = load_generated_samples(before_dir, config.num_samples)
+    else:
+        print(f"[3/6] Generating baseline samples ({config.num_samples} forget, {config.num_samples} retain)", flush=True)
+        before_images = generate_evaluation_samples(model, conditions, config, before_dir, "Baseline")
     print(f"[4/6] Training PIU ({config.training_steps} optimizer steps, micro-batch {config.batch_size}, accumulation {config.gradient_accumulation_steps}, effective batch {config.batch_size * config.gradient_accumulation_steps})", flush=True)
     checkpoint_path = unlearn_identity(model, split, config)
     print(f"[5/6] Generating post-unlearning samples ({config.num_samples} forget, {config.num_samples} retain)", flush=True)
