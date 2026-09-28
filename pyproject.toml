@@ -34,6 +34,7 @@ data = [
 [project.scripts]
 piu-demo = "piu_unlearning.main:main"
 piu-prepare-data = "piu_unlearning.prepare_data:main"
+piu-recompute-data = "piu_unlearning.prepare_data:recompute_main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
