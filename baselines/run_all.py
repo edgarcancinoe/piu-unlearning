@@ -17,10 +17,11 @@ import numpy as np
 from piu_unlearning.config import RunConfig, parse_config
 from piu_unlearning.data import create_evaluation_conditions, create_experiment_split, load_prepared_data, save_evaluation_conditions, select_anchor_embedding, write_split_manifest
 from piu_unlearning.models.arc2face import GeneratedSamples
+from piu_unlearning.methods.wid import prepare_wid_inputs
 from piu_unlearning.visualization import write_method_comparison
 
 
-METHODS = ("piu", "esd", "uce")
+METHODS = ("piu", "esd", "uce", "wid")
 METRICS = ("forget_ism", "retain_ism", "AccU", "AccR", "SRK")
 
 
@@ -150,6 +151,8 @@ def launch(args):
     if args.output_dir.exists() and any(args.output_dir.iterdir()): raise ValueError("Output directory is not empty; choose a new --output-dir to avoid mixing runs")
     split, conditions = prepare_split(jobs[0]["split_args"])
     if any(job["method"] != "esd" for job in jobs): select_anchor_embedding(split, parse_config(jobs[0]["split_args"]))
+    for job in jobs:
+        if job["method"] == "wid": prepare_wid_inputs(split, parse_config(job["args"]))
     args.output_dir.mkdir(parents=True, exist_ok=True)
     write_split_manifest(split, args.output_dir / "split.json")
     save_evaluation_conditions(conditions, args.output_dir / "evaluation_conditions.npz")

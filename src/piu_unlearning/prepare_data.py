@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import io
 import json
+import os
 import shutil
 from pathlib import Path
 
@@ -62,6 +63,70 @@ def prepare_canonical(output_dir: Path, revision: str, cache_dir: Path | None) -
     download_face_models(output_dir / "face_models")
     metadata = {"dataset": {"repo": DATASET_REPO, "revision": revision}, "artifacts": {name: {"source": source, "sha256": checksum} for name, (source, checksum) in CANONICAL_ARTIFACTS.items()}, "num_rows": len(labels), "num_identities": len(np.unique(labels))}
     (output_dir / "metadata.json").write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
+
+
+def materialize_images(shards: list[Path], names: list[str], image_root: Path) -> None:
+    import pyarrow.parquet as pq
+
+    wanted, found = set(names), set()
+    image_root.mkdir(parents=True, exist_ok=True)
+    for shard in shards:
+        for batch in pq.ParquetFile(shard).iter_batches(batch_size=64, columns=["image", "file_name"]):
+            for image, raw_name in zip(batch.column("image").to_pylist(), batch.column("file_name").to_pylist()):
+                name = Path(raw_name).name
+                if name not in wanted: continue
+                if name in found: raise ValueError(f"Duplicate dataset image name: {name}")
+                found.add(name)
+                destination = image_root / name
+                if destination.exists():
+                    if destination.read_bytes() != image["bytes"]: raise ValueError(f"Image already exists with different contents: {destination}")
+                else: destination.write_bytes(image["bytes"])
+    if found != wanted: raise ValueError(f"Dataset is missing {len(wanted - found)} requested images")
+
+
+def prepare_image_manifest(data_dir: Path, image_paths: Path, image_root: Path, extractor: ArcFaceExtractor) -> Path:
+    """Bind explicitly ordered image names to embeddings after checking every pair."""
+    from PIL import Image
+    from tqdm import tqdm
+
+    names = [Path(line.strip()).name for line in image_paths.read_text(encoding="utf-8").splitlines()]
+    embeddings, labels = np.load(data_dir / "embeddings.npy"), np.load(data_dir / "labels.npy")
+    if len(names) != len(embeddings) or len(names) != len(labels): raise ValueError("Image names, embeddings, and labels must have the same row count")
+    if any(not name for name in names) or len(set(names)) != len(names): raise ValueError("Image names must be nonempty and unique; use a flat image directory")
+    rows, similarities = [], []
+    for index, name in enumerate(tqdm(names, desc="Verifying image/embedding rows")):
+        path = image_root / name
+        with Image.open(path) as image: embedding = extractor(np.asarray(image.convert("RGB")))
+        if embedding is None: raise ValueError(f"No face found in row {index}: {name}")
+        stored = embeddings[index].astype(np.float32)
+        similarity = float(np.dot(embedding, stored) / (np.linalg.norm(embedding) * np.linalg.norm(stored)))
+        if not np.isfinite(similarity) or similarity < 0.99: raise ValueError(f"Image/embedding mismatch at row {index}: {name}, cosine={similarity:.6f}")
+        similarities.append(similarity)
+        rows.append({"path": name, "sha256": sha256(path)})
+    manifest = {"version": 1, "image_root": os.path.relpath(image_root.resolve(), data_dir.resolve()), "embeddings_sha256": sha256(data_dir / "embeddings.npy"), "labels_sha256": sha256(data_dir / "labels.npy"), "source_paths_sha256": sha256(image_paths), "alignment": {"min_cosine": min(similarities), "verified_rows": len(rows)}, "rows": rows}
+    path = data_dir / "image_manifest.json"
+    path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+    return path
+
+
+def images_main() -> None:
+    parser = argparse.ArgumentParser(description="Prepare and verify real images for WID without changing embedding rows or labels.")
+    parser.add_argument("--data-dir", type=Path, default=DATA_DIR)
+    parser.add_argument("--image-paths", type=Path, help="Original row-aligned image_paths.txt; defaults to recomputed file_names.txt.")
+    parser.add_argument("--image-root", type=Path, help="Flat image directory; defaults to DATA_DIR/images.")
+    parser.add_argument("--download-images", action="store_true", help="Materialize named images from the dataset parquet shards.")
+    parser.add_argument("--revision", default=DATASET_REVISION)
+    parser.add_argument("--cache-dir", type=Path)
+    parser.add_argument("--device", default="cpu", help="Device used for one-time image/embedding verification.")
+    args = parser.parse_args()
+    paths = args.image_paths or args.data_dir / "file_names.txt"
+    if not paths.is_file(): parser.error("Provide --image-paths with the original row-aligned mapping; canonical ordering cannot be guessed")
+    root = args.image_root or args.data_dir / "images"
+    if args.download_images:
+        names = [Path(line.strip()).name for line in paths.read_text(encoding="utf-8").splitlines()]
+        materialize_images(download_dataset(args.revision, args.cache_dir), names, root)
+    extractor = ArcFaceExtractor(args.data_dir / "face_models", args.device)
+    print(f"Verified image manifest: {prepare_image_manifest(args.data_dir, paths, root, extractor)}")
 
 
 def download_dataset(revision: str, cache_dir: Path | None) -> list[Path]:

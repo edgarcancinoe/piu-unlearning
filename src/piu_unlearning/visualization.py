@@ -44,7 +44,9 @@ def write_training_curves(loss_history_path: Path, ism_history_path: Path, outpu
     draw = ImageDraw.Draw(image)
     draw.text((40, 20), f"{method.upper()} training curves", fill="#202124", font=FONT)
     draw_chart(draw, (50, 70, 580, 630), "Total and forget loss", loss_history, (("loss", COLORS["loss"]), ("forget_loss", COLORS["forget_loss"])))
-    draw_chart(draw, (635, 70, 1165, 630), "Preservation loss", loss_history, (("preserve_loss", COLORS["preserve_loss"]),))
+    if method == "wid":
+        draw_chart(draw, (635, 70, 1165, 630), "Weighted WID components", loss_history, (("model_term", "#d93025"), ("identity_term", "#1a73e8"), ("preserve_term", "#188038")))
+    else: draw_chart(draw, (635, 70, 1165, 630), "Preservation loss", loss_history, (("preserve_loss", COLORS["preserve_loss"]),))
     if ism_history: draw_chart(draw, (1220, 70, 1750, 630), "Validation ISM", ism_history, (("forget_ism", COLORS["forget_ism"]), ("retain_ism", COLORS["retain_ism"])))
     image.save(output_path)
 

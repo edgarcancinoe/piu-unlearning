@@ -92,7 +92,7 @@ Identity similarity (ISM) is evaluated every 50 optimizer steps by default. Use 
 
 ## Baselines
 
-Arc2Face adaptations of [ESD](docs/baselines/ESD.md) and [UCE](docs/baselines/UCE.md) are also available. Their commands, settings, and reproduction notes are documented separately.
+Arc2Face adaptations of [ESD](docs/baselines/ESD.md), [UCE](docs/baselines/UCE.md), and [WID](docs/baselines/WID.md) are also available. Their commands, settings, and reproduction notes are documented separately.
 
 Use the [comparison launcher](baselines/README.md) to run the supported methods sequentially with shared evaluation conditions.
 

@@ -9,12 +9,13 @@ from typing import TYPE_CHECKING
 
 import torch
 
-from piu_unlearning.config import RunConfig, UCEConfig, parse_config
-from piu_unlearning.data import EvaluationConditions, ExperimentSplit, create_embedding_loaders, create_evaluation_conditions, create_experiment_split, load_prepared_data, save_evaluation_conditions, write_split_manifest
+from piu_unlearning.config import RunConfig, UCEConfig, WIDConfig, parse_config
+from piu_unlearning.data import EvaluationConditions, ExperimentSplit, create_embedding_loaders, create_evaluation_conditions, create_experiment_split, create_training_loaders, load_prepared_data, save_evaluation_conditions, write_split_manifest
 from piu_unlearning.evaluation import EvaluationReport, evaluate_before_after, evaluate_training_ism
 from piu_unlearning.models.arcface import ArcFaceExtractor
 from piu_unlearning.models.arc2face import Arc2FaceIdentityConditioner, GeneratedSamples, generate_evaluation_samples, load_arc2face, load_generated_samples
 from piu_unlearning.methods import build_method
+from piu_unlearning.methods.wid import WIDContext, WIDInputs, prepare_wid_inputs
 from piu_unlearning.training.losses import NoisePredictionContext
 from piu_unlearning.training.runner import train_model
 from piu_unlearning.visualization import create_summary_visuals
@@ -33,12 +34,13 @@ class UnlearningResult:
     method: str = "piu"
 
 
-def unlearn_identity(model: StableDiffusionPipeline, split: ExperimentSplit, conditions: EvaluationConditions, config: RunConfig) -> Path:
+def unlearn_identity(model: StableDiffusionPipeline, split: ExperimentSplit, conditions: EvaluationConditions, config: RunConfig, wid_inputs: WIDInputs | None = None) -> Path:
     """Prepare a reference, then dispatch to closed-form editing or training."""
     torch.manual_seed(config.seed)
     device = torch.device(config.device)
     method = build_method(config)
-    reference = method.prepare_reference(split, config)
+    if isinstance(config, WIDConfig) and wid_inputs is None: wid_inputs = prepare_wid_inputs(split, config)
+    reference = wid_inputs.reference if wid_inputs is not None else method.prepare_reference(split, config)
     reference_metadata = {"mode": reference.mode, "identity_id": reference.identity_id, "similarity": reference.similarity}
     config.output_dir.mkdir(parents=True, exist_ok=True)
     (config.output_dir / "reference.json").write_text(json.dumps(reference_metadata, indent=2) + "\n", encoding="utf-8")
@@ -49,13 +51,21 @@ def unlearn_identity(model: StableDiffusionPipeline, split: ExperimentSplit, con
 
     from diffusers import DDPMScheduler
 
-    forget_loader, retain_loader = create_embedding_loaders(split, config)
+    if wid_inputs is not None: forget_loader, retain_loader = create_training_loaders(wid_inputs.dataset, split.retain_train.embeddings, config)
+    else: forget_loader, retain_loader = create_embedding_loaders(split, config)
     with torch.no_grad():
-        reference_conditioning = identity_conditioner.encode(reference.embedding)
+        reference_conditioning = identity_conditioner.encode(reference.embedding.to(device))
 
     frozen_unet = copy.deepcopy(model.unet).eval().requires_grad_(False)
     scheduler = DDPMScheduler.from_config(model.scheduler.config)
     context = NoisePredictionContext(model.unet, frozen_unet, scheduler, identity_conditioner, reference_conditioning, device)
+    if wid_inputs is not None:
+        encoder = wid_inputs.encoder.to(device) if wid_inputs.encoder is not None else None
+        target = wid_inputs.identity_target.to(device) if wid_inputs.identity_target is not None else None
+        context = WIDContext(context, model.vae.eval().requires_grad_(False), encoder, target)
+        (config.output_dir / "wid_identity.json").write_text(json.dumps(wid_inputs.metadata, indent=2) + "\n", encoding="utf-8")
+        if target is not None: torch.save(target.detach().cpu(), config.output_dir / "identity_target.pt")
+        print(f"WID identity target: {wid_inputs.metadata['target_mode']}; loss: mean MSE", flush=True)
     extractor = ArcFaceExtractor(config.embeddings_path.parent / "face_models", config.evaluation_device) if config.evaluation_every else None
 
     def evaluate(step: int) -> tuple[float, float]: return evaluate_training_ism(model, conditions, split, config, extractor, config.output_dir / "training_evaluation", step)
@@ -74,6 +84,7 @@ def run_demo(config: RunConfig, split: ExperimentSplit | None = None) -> Unlearn
         embeddings, labels, centroids, centroid_labels = load_prepared_data(config)
         split = create_experiment_split(embeddings, labels, centroids, centroid_labels, config)
     conditions = create_evaluation_conditions(split, config)
+    wid_inputs = prepare_wid_inputs(split, config) if isinstance(config, WIDConfig) else None
     write_split_manifest(split, config.output_dir / "split.json")
     save_evaluation_conditions(conditions, config.output_dir / "evaluation_conditions.npz")
     print(f"Forget train dataset indices ({len(split.forget_train.indices)}): {split.forget_train.indices.tolist()}", flush=True)
@@ -94,7 +105,9 @@ def run_demo(config: RunConfig, split: ExperimentSplit | None = None) -> Unlearn
         print(f"[4/6] Applying UCE closed-form edit ({config.edit_scope} cross-attention key/value projections)", flush=True)
     else:
         print(f"[4/6] Training {config.method.upper()} ({config.training_steps} optimizer steps, micro-batch {config.batch_size}, accumulation {config.gradient_accumulation_steps}, effective batch {config.batch_size * config.gradient_accumulation_steps}, ISM every {config.evaluation_every or 'disabled'} steps)", flush=True)
-    checkpoint_path = unlearn_identity(model, split, conditions, config)
+    if wid_inputs is None: checkpoint_path = unlearn_identity(model, split, conditions, config)
+    else: checkpoint_path = unlearn_identity(model, split, conditions, config, wid_inputs)
+    del wid_inputs
     print(f"[5/6] Generating post-unlearning samples ({config.num_samples} forget, {config.num_samples} retain)", flush=True)
     after_images = generate_evaluation_samples(model, conditions, config, after_dir, "Post-unlearning")
     print("[6/6] Extracting face embeddings and computing evaluation metrics", flush=True)

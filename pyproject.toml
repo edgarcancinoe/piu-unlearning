@@ -8,7 +8,7 @@ version = "0.0.0"
 description = "Proximity-guided identity unlearning for ID-conditioned diffusion models"
 readme = "README.md"
 license = "MIT"
-license-files = ["LICENSE", "src/piu_unlearning/models/ARC2FACE_LICENSE"]
+license-files = ["LICENSE", "src/piu_unlearning/models/ARC2FACE_LICENSE", "src/piu_unlearning/models/INSIGHTFACE_PYTORCH_LICENSE"]
 requires-python = ">=3.10,<3.13"
 dependencies = [
     "torch~=2.4.1",
@@ -35,9 +35,10 @@ data = [
 piu-demo = "piu_unlearning.main:main"
 piu-prepare-data = "piu_unlearning.prepare_data:main"
 piu-recompute-data = "piu_unlearning.prepare_data:recompute_main"
+piu-prepare-images = "piu_unlearning.prepare_data:images_main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.package-data]
-piu_unlearning = ["models/ARC2FACE_LICENSE"]
+piu_unlearning = ["models/ARC2FACE_LICENSE", "models/INSIGHTFACE_PYTORCH_LICENSE"]

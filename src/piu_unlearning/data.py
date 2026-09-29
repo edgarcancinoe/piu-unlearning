@@ -8,10 +8,11 @@ from typing import TYPE_CHECKING
 import numpy as np
 import torch
 import torch.nn.functional as F
+from PIL import Image
 from torch.utils.data import DataLoader, Dataset, RandomSampler
 
 if TYPE_CHECKING:
-    from piu_unlearning.config import ESDConfig, PIUConfig, RunConfig
+    from piu_unlearning.config import ESDConfig, PIUConfig, RunConfig, TrainingConfig
 
 
 @dataclass(frozen=True)
@@ -166,15 +167,62 @@ def create_embedding_loaders(split: ExperimentSplit, config: PIUConfig | ESDConf
         forget_dataset = F.normalize(forget_embeddings.mean(dim=0, keepdim=True), dim=1)
     else:
         forget_dataset = forget_embeddings
+    return create_training_loaders(forget_dataset, split.retain_train.embeddings, config)
+
+
+def create_training_loaders(forget_dataset: Dataset | torch.Tensor, retain_embeddings: torch.Tensor, config: TrainingConfig) -> tuple[DataLoader, DataLoader | None]:
     num_samples = config.training_steps * config.gradient_accumulation_steps * config.batch_size
     forget_sampler = RandomSampler(forget_dataset, replacement=True, num_samples=num_samples, generator=torch.Generator().manual_seed(config.seed))
     forget_loader = DataLoader(forget_dataset, batch_size=config.batch_size, sampler=forget_sampler)
     retain_loader = None
     if config.preservation_weight > 0:
-        if not len(split.retain_train.embeddings): raise ValueError("Preservation requires nonempty retain training data")
-        retain_sampler = RandomSampler(split.retain_train.embeddings, replacement=True, num_samples=num_samples, generator=torch.Generator().manual_seed(config.seed + 1))
-        retain_loader = DataLoader(split.retain_train.embeddings, batch_size=config.batch_size, sampler=retain_sampler)
+        if not len(retain_embeddings): raise ValueError("Preservation requires nonempty retain training data")
+        retain_sampler = RandomSampler(retain_embeddings, replacement=True, num_samples=num_samples, generator=torch.Generator().manual_seed(config.seed + 1))
+        retain_loader = DataLoader(retain_embeddings, batch_size=config.batch_size, sampler=retain_sampler)
     return forget_loader, retain_loader
+
+
+def load_training_image(path: Path, resolution: int = 512) -> torch.Tensor:
+    with Image.open(path) as image:
+        image = image.convert("RGB")
+        width, height = image.size
+        if width <= height: size = (resolution, int(resolution * height / width))
+        else: size = (int(resolution * width / height), resolution)
+        image = image.resize(size, Image.Resampling.BILINEAR)
+        left, top = round((size[0] - resolution) / 2), round((size[1] - resolution) / 2)
+        array = np.array(image.crop((left, top, left + resolution, top + resolution)), dtype=np.float32)
+    return torch.from_numpy(array).permute(2, 0, 1) / 127.5 - 1
+
+
+class PairedImageDataset(Dataset):
+    def __init__(self, partition: EmbeddingPartition, paths: list[Path]):
+        self.embeddings = partition.embeddings
+        self.paths = [paths[index] for index in partition.indices.tolist()]
+
+    def __len__(self): return len(self.paths)
+
+    def __getitem__(self, index):
+        return {"face_embs": self.embeddings[index], "pixel_values": load_training_image(self.paths[index])}
+
+
+def load_image_manifest(config, required_indices: torch.Tensor) -> tuple[list[Path], dict]:
+    from piu_unlearning.prepare_data import sha256
+
+    path = config.image_manifest or config.data_dir / "image_manifest.json"
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    rows = manifest["rows"]
+    if manifest["version"] != 1 or len(rows) != len(np.load(config.labels_path)): raise ValueError("Unsupported or misaligned image manifest")
+    minimum = manifest["alignment"]["min_cosine"]
+    if manifest["alignment"]["verified_rows"] != len(rows) or not np.isfinite(minimum) or minimum < 0.99: raise ValueError("Image manifest has not passed row verification")
+    for name, data_path in (("embeddings", config.embeddings_path), ("labels", config.labels_path)):
+        if manifest[f"{name}_sha256"] != sha256(data_path): raise ValueError(f"Image manifest does not match {name}.npy; rerun piu-prepare-images")
+    root = config.image_root or path.parent / manifest["image_root"]
+    if any(not row["path"] or Path(row["path"]).name != row["path"] for row in rows): raise ValueError("Manifest image paths must be plain file names")
+    paths = [root / row["path"] for row in rows]
+    for index in required_indices.tolist():
+        if sha256(paths[index]) != rows[index]["sha256"]: raise ValueError(f"Image changed since verification: {paths[index]}")
+        with Image.open(paths[index]) as image: image.verify()
+    return paths, {"path": str(path.resolve()), "sha256": sha256(path), "image_root": str(root.resolve()), "alignment": manifest["alignment"]}
 
 
 def select_anchor_embedding(split: ExperimentSplit, config: RunConfig) -> tuple[torch.Tensor, int, float]:

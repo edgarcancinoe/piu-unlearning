@@ -14,7 +14,7 @@ from piu_unlearning.training.losses import LossOutput
 if TYPE_CHECKING:
     from diffusers import UNet2DConditionModel
     from torch.utils.data import DataLoader
-    from piu_unlearning.config import ESDConfig, PIUConfig
+    from piu_unlearning.config import TrainingConfig
 
 
 def batches_forever(loader: DataLoader) -> Iterator:
@@ -23,7 +23,7 @@ def batches_forever(loader: DataLoader) -> Iterator:
         yield from loader
 
 
-def train_model(model: UNet2DConditionModel, compute_loss: Callable, forget_loader: DataLoader, retain_loader: DataLoader | None, config: PIUConfig | ESDConfig, evaluate_ism: Callable[[int], tuple[float, float]] | None = None) -> Path:
+def train_model(model: UNet2DConditionModel, compute_loss: Callable, forget_loader: DataLoader, retain_loader: DataLoader | None, config: TrainingConfig, evaluate_ism: Callable[[int], tuple[float, float]] | None = None) -> Path:
     """Optimize a supplied objective; methods own their conditioning and loss computation."""
     model.train()
     output_dir = config.output_dir / "checkpoints"
@@ -48,6 +48,7 @@ def train_model(model: UNet2DConditionModel, compute_loss: Callable, forget_load
                 for name, value in metrics.items(): totals[name] += value.detach().item() / config.gradient_accumulation_steps
                 progress.set_postfix(step=f"{step}/{config.training_steps}", micro=f"{micro_step}/{config.gradient_accumulation_steps}", **{name: f"{value.item():.4f}" for name, value in metrics.items()})
                 progress.update()
+            if config.max_grad_norm is not None: torch.nn.utils.clip_grad_norm_(model.parameters(), config.max_grad_norm, error_if_nonfinite=True)
             optimizer.step()
             with loss_history_path.open("a", encoding="utf-8") as history: history.write(json.dumps({"step": step, **totals}) + "\n")
 
@@ -72,8 +73,8 @@ def train_model(model: UNet2DConditionModel, compute_loss: Callable, forget_load
         "training_steps": config.training_steps,
         "gradient_accumulation_steps": config.gradient_accumulation_steps,
         "preservation_weight": config.preservation_weight,
-        "negative_guidance_scale": config.negative_guidance_scale,
         "trainable_parameters": [name for name, parameter in model.named_parameters() if parameter.requires_grad],
     }
+    if config.method in ("piu", "esd"): checkpoint["negative_guidance_scale"] = config.negative_guidance_scale
     torch.save(checkpoint, checkpoint_path)
     return checkpoint_path

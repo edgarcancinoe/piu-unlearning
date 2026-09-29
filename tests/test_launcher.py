@@ -25,8 +25,9 @@ class LauncherTests(unittest.TestCase):
     def test_defaults_keep_method_settings_and_shared_split(self):
         args = launcher.parse_args(["--identity-id", "512", "--use-anchor-overrides"])
         jobs = launcher.build_jobs(args)
-        self.assertEqual([job["method"] for job in jobs], ["piu", "esd", "uce"])
-        piu, esd, uce = [parse_config(job["args"]) for job in jobs]
+        self.assertEqual([job["method"] for job in jobs], ["piu", "esd", "uce", "wid"])
+        piu, esd, uce, wid = [parse_config(job["args"]) for job in jobs]
+        self.assertEqual((wid.training_steps, wid.identity_loss_weight), (100, 0.1))
         self.assertEqual((piu.training_steps, esd.training_steps), (400, 1000))
         self.assertEqual((piu.optimizer, esd.optimizer), ("adamw", "adam"))
         self.assertFalse(hasattr(uce, "training_steps"))
@@ -100,14 +101,14 @@ class LauncherTests(unittest.TestCase):
                 after = {"forget": {"ism": 0.3}, "retain": {"ism": 0.6}, "srk": {"forget_accuracy": 0.1, "retain_accuracy": 0.9, "score": 8.18}}
                 (config.output_dir / "summary.json").write_text(json.dumps({"method": config.method, "evaluation": {"before": before, "after": after}, **images}))
 
-            with patch.object(launcher, "prepare_split", return_value=(split, conditions)), patch.object(launcher, "select_anchor_embedding"), patch.object(launcher, "run_process", side_effect=fake_process), contextlib.redirect_stdout(io.StringIO()): launcher.launch(args)
-            self.assertEqual(calls, ["piu", "esd", "uce"])
+            with patch.object(launcher, "prepare_split", return_value=(split, conditions)), patch.object(launcher, "select_anchor_embedding"), patch.object(launcher, "prepare_wid_inputs"), patch.object(launcher, "run_process", side_effect=fake_process), contextlib.redirect_stdout(io.StringIO()): launcher.launch(args)
+            self.assertEqual(calls, ["piu", "esd", "uce", "wid"])
             for name in ("comparison.csv", "comparison.json", "comparison.md", "comparison_forget.png", "comparison_retain.png"):
                 self.assertTrue((args.output_dir / name).is_file())
             rows = json.loads((args.output_dir / "comparison.json").read_text())
-            self.assertEqual([row["method"] for row in rows], ["original", "piu", "esd", "uce"])
+            self.assertEqual([row["method"] for row in rows], ["original", "piu", "esd", "uce", "wid"])
             self.assertAlmostEqual(rows[1]["delta_forget_ism"], -0.5)
-            self.assertEqual([run["status"] for run in json.loads((args.output_dir / "runs.json").read_text())], ["completed"] * 3)
+            self.assertEqual([run["status"] for run in json.loads((args.output_dir / "runs.json").read_text())], ["completed"] * 4)
             with self.assertRaisesRegex(ValueError, "not empty"): launcher.launch(args)
             (args.output_dir / "uce/split.json").write_text("{}")
             with self.assertRaisesRegex(ValueError, "split differs"): launcher.verify_run(args.output_dir, "uce")
@@ -121,11 +122,20 @@ class LauncherTests(unittest.TestCase):
             args = launcher.parse_args(["--identity-id", "0", "--num-samples", "1", "--output-dir", str(Path(directory) / "run")])
             config = parse_config(["--identity-id", "0", "--num-samples", "1"])
             split = make_split(config)
-            with patch.object(launcher, "prepare_split", return_value=(split, create_evaluation_conditions(split, config))), patch.object(launcher, "select_anchor_embedding"), patch.object(launcher, "run_process", side_effect=RuntimeError("failed")) as process:
+            with patch.object(launcher, "prepare_split", return_value=(split, create_evaluation_conditions(split, config))), patch.object(launcher, "select_anchor_embedding"), patch.object(launcher, "prepare_wid_inputs"), patch.object(launcher, "run_process", side_effect=RuntimeError("failed")) as process:
                 with self.assertRaisesRegex(RuntimeError, "failed"): launcher.launch(args)
             self.assertEqual(process.call_count, 1)
             self.assertEqual(json.loads((args.output_dir / "runs.json").read_text())[0]["status"], "failed")
             self.assertFalse((args.output_dir / "comparison.csv").exists())
+
+    def test_wid_dependencies_checked_before_any_method_runs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            args = launcher.parse_args(["--identity-id", "0", "--output-dir", str(Path(directory) / "run"), "--wid-args=--identity-checkpoint weights.pt"])
+            self.assertEqual(parse_config(launcher.build_jobs(args)[-1]["args"]).identity_checkpoint, Path("weights.pt"))
+            with patch.object(launcher, "prepare_split", return_value=(object(), object())), patch.object(launcher, "select_anchor_embedding"), patch.object(launcher, "prepare_wid_inputs", side_effect=ValueError("missing WID images")), patch.object(launcher, "run_process") as process:
+                with self.assertRaisesRegex(ValueError, "missing WID images"): launcher.launch(args)
+                process.assert_not_called()
+            self.assertFalse(args.output_dir.exists())
 
 
 if __name__ == "__main__":
