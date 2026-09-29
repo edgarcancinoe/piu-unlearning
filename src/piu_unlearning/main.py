@@ -3,18 +3,20 @@ from __future__ import annotations
 import copy
 import json
 from dataclasses import asdict, dataclass
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import torch
 
-from piu_unlearning.config import PIUConfig, parse_config
-from piu_unlearning.data import ExperimentSplit, create_embedding_loaders, create_evaluation_conditions, create_experiment_split, load_prepared_data, save_evaluation_conditions, select_anchor_embedding, write_split_manifest
+from piu_unlearning.config import RunConfig, UCEConfig, parse_config
+from piu_unlearning.data import EvaluationConditions, ExperimentSplit, create_embedding_loaders, create_evaluation_conditions, create_experiment_split, load_prepared_data, save_evaluation_conditions, write_split_manifest
 from piu_unlearning.evaluation import EvaluationReport, evaluate_before_after, evaluate_training_ism
 from piu_unlearning.models.arcface import ArcFaceExtractor
 from piu_unlearning.models.arc2face import Arc2FaceIdentityConditioner, GeneratedSamples, generate_evaluation_samples, load_arc2face, load_generated_samples
-from piu_unlearning.training.losses import PIU
-from piu_unlearning.training.runner import train_piu
+from piu_unlearning.methods import build_method
+from piu_unlearning.training.losses import NoisePredictionContext
+from piu_unlearning.training.runner import train_model
 from piu_unlearning.visualization import create_summary_visuals
 
 if TYPE_CHECKING:
@@ -22,65 +24,55 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True)
-class PIUResult:
+class UnlearningResult:
     identity_id: int
     checkpoint_path: Path
     before_images: GeneratedSamples
     after_images: GeneratedSamples
     evaluation: EvaluationReport
+    method: str = "piu"
 
 
-def unlearn_identity(model: StableDiffusionPipeline, split: ExperimentSplit, conditions: EvaluationConditions, config: PIUConfig) -> Path:
-    """Train PIU for one identity and save the resulting U-Net checkpoint."""
-    from diffusers import DDPMScheduler
-
+def unlearn_identity(model: StableDiffusionPipeline, split: ExperimentSplit, conditions: EvaluationConditions, config: RunConfig) -> Path:
+    """Prepare a reference, then dispatch to closed-form editing or training."""
     torch.manual_seed(config.seed)
     device = torch.device(config.device)
-    forget_loader, retain_loader = create_embedding_loaders(split, config)
-    anchor_embedding, anchor_id, anchor_similarity = select_anchor_embedding(split, config)
-    print(f"Selected anchor identity: {anchor_id} (cosine similarity {anchor_similarity:.6f})", flush=True)
-    anchor_embedding = anchor_embedding.unsqueeze(0).to(device)
+    method = build_method(config)
+    reference = method.prepare_reference(split, config)
+    reference_metadata = {"mode": reference.mode, "identity_id": reference.identity_id, "similarity": reference.similarity}
+    config.output_dir.mkdir(parents=True, exist_ok=True)
+    (config.output_dir / "reference.json").write_text(json.dumps(reference_metadata, indent=2) + "\n", encoding="utf-8")
+    torch.save(reference.embedding.detach().cpu(), config.output_dir / "reference_embedding.pt")
+    print(f"Reference identity: {reference_metadata}", flush=True)
     identity_conditioner = Arc2FaceIdentityConditioner(model.tokenizer, model.text_encoder)
+    if isinstance(config, UCEConfig): return method.edit(model.unet, split, identity_conditioner, reference, config)
+
+    from diffusers import DDPMScheduler
+
+    forget_loader, retain_loader = create_embedding_loaders(split, config)
     with torch.no_grad():
-        anchor_conditioning = identity_conditioner.encode(anchor_embedding)
+        reference_conditioning = identity_conditioner.encode(reference.embedding)
 
     frozen_unet = copy.deepcopy(model.unet).eval().requires_grad_(False)
     scheduler = DDPMScheduler.from_config(model.scheduler.config)
-    piu = PIU(preservation_weight=config.preservation_weight, negative_guidance_scale=config.negative_guidance_scale)
+    context = NoisePredictionContext(model.unet, frozen_unet, scheduler, identity_conditioner, reference_conditioning, device)
     extractor = ArcFaceExtractor(config.embeddings_path.parent / "face_models", config.evaluation_device) if config.evaluation_every else None
 
     def evaluate(step: int) -> tuple[float, float]: return evaluate_training_ism(model, conditions, split, config, extractor, config.output_dir / "training_evaluation", step)
 
-    return train_piu(
-        piu=piu,
-        forget_loader=forget_loader,
-        retain_loader=retain_loader,
-        anchor_conditioning=anchor_conditioning,
-        trainable_unet=model.unet,
-        frozen_unet=frozen_unet,
-        scheduler=scheduler,
-        identity_conditioner=identity_conditioner,
-        device=device,
-        output_dir=config.output_dir / "checkpoints",
-        training_steps=config.training_steps,
-        gradient_accumulation_steps=config.gradient_accumulation_steps,
-        evaluate_ism=evaluate if extractor is not None else None,
-        evaluation_every=config.evaluation_every,
-        learning_rate=config.learning_rate,
-        weight_decay=config.weight_decay,
-        log_every=config.log_every,
-    )
+    return train_model(model.unet, partial(method.compute_loss, context=context), forget_loader, retain_loader, config, evaluate if extractor is not None else None)
 
 
-def run_demo(config: PIUConfig) -> PIUResult:
+def run_demo(config: RunConfig, split: ExperimentSplit | None = None) -> UnlearningResult:
     before_dir = config.output_dir / "before"
     after_dir = config.output_dir / "after"
     write_config(config, config.output_dir / "config.json")
-    print(f"PIU demo for identity {config.identity_id}", flush=True)
+    print(f"{config.method.upper()} demo for identity {config.identity_id}", flush=True)
     print(f"Resolved configuration: {config.output_dir / 'config.json'}", flush=True)
     print("[1/6] Preparing canonical data splits and evaluation conditions", flush=True)
-    embeddings, labels, centroids, centroid_labels = load_prepared_data(config)
-    split = create_experiment_split(embeddings, labels, centroids, centroid_labels, config)
+    if split is None:
+        embeddings, labels, centroids, centroid_labels = load_prepared_data(config)
+        split = create_experiment_split(embeddings, labels, centroids, centroid_labels, config)
     conditions = create_evaluation_conditions(split, config)
     write_split_manifest(split, config.output_dir / "split.json")
     save_evaluation_conditions(conditions, config.output_dir / "evaluation_conditions.npz")
@@ -98,32 +90,35 @@ def run_demo(config: PIUConfig) -> PIUResult:
     else:
         print(f"[3/6] Generating baseline samples ({config.num_samples} forget, {config.num_samples} retain)", flush=True)
         before_images = generate_evaluation_samples(model, conditions, config, before_dir, "Baseline")
-    print(f"[4/6] Training PIU ({config.training_steps} optimizer steps, micro-batch {config.batch_size}, accumulation {config.gradient_accumulation_steps}, effective batch {config.batch_size * config.gradient_accumulation_steps}, ISM every {config.evaluation_every or 'disabled'} steps)", flush=True)
+    if isinstance(config, UCEConfig):
+        print(f"[4/6] Applying UCE closed-form edit ({config.edit_scope} cross-attention key/value projections)", flush=True)
+    else:
+        print(f"[4/6] Training {config.method.upper()} ({config.training_steps} optimizer steps, micro-batch {config.batch_size}, accumulation {config.gradient_accumulation_steps}, effective batch {config.batch_size * config.gradient_accumulation_steps}, ISM every {config.evaluation_every or 'disabled'} steps)", flush=True)
     checkpoint_path = unlearn_identity(model, split, conditions, config)
     print(f"[5/6] Generating post-unlearning samples ({config.num_samples} forget, {config.num_samples} retain)", flush=True)
     after_images = generate_evaluation_samples(model, conditions, config, after_dir, "Post-unlearning")
     print("[6/6] Extracting face embeddings and computing evaluation metrics", flush=True)
     evaluation = evaluate_before_after(before_images, after_images, conditions, split, config)
-    result = PIUResult(identity_id=config.identity_id, checkpoint_path=checkpoint_path, before_images=before_images, after_images=after_images, evaluation=evaluation)
-    curves_path, grid_path = create_summary_visuals(before_images, after_images, conditions, config.output_dir)
+    result = UnlearningResult(identity_id=config.identity_id, checkpoint_path=checkpoint_path, before_images=before_images, after_images=after_images, evaluation=evaluation, method=config.method)
+    curves_path, grid_path = create_summary_visuals(before_images, after_images, conditions, config.output_dir, config.method)
     write_summary(result, config.output_dir / "summary.json")
     print_comparison(result)
-    print(f"Summary visuals: {curves_path}, {grid_path}", flush=True)
+    print(f"Summary visuals: {', '.join(str(path) for path in (curves_path, grid_path) if path is not None)}", flush=True)
     print(f"Finished. Results written to {config.output_dir}", flush=True)
     return result
 
 
-def write_summary(result: PIUResult, path: Path) -> None:
+def write_summary(result: UnlearningResult, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(asdict(result), indent=2, default=str) + "\n", encoding="utf-8")
 
 
-def write_config(config: PIUConfig, path: Path) -> None:
+def write_config(config: RunConfig, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(asdict(config), indent=2, default=str) + "\n", encoding="utf-8")
 
 
-def print_comparison(result: PIUResult) -> None:
+def print_comparison(result: UnlearningResult) -> None:
     print(f"Identity {result.identity_id}")
     print(f"{'Metric':<12} {'Before':>12} {'After':>12} {'Change':>12}")
     metrics = (

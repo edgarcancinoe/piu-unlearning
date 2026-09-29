@@ -37,12 +37,12 @@ def draw_chart(draw: ImageDraw.ImageDraw, box: tuple[int, int, int, int], title:
         draw.text((left + index * 125, top + 4), key.replace("_", " "), fill=color, font=FONT)
 
 
-def write_training_curves(loss_history_path: Path, ism_history_path: Path, output_path: Path) -> None:
+def write_training_curves(loss_history_path: Path, ism_history_path: Path, output_path: Path, method: str = "piu") -> None:
     loss_history = load_history(loss_history_path)
     ism_history = load_history(ism_history_path) if ism_history_path.exists() else []
     image = Image.new("RGB", (1800, 700), "white")
     draw = ImageDraw.Draw(image)
-    draw.text((40, 20), "PIU training curves", fill="#202124", font=FONT)
+    draw.text((40, 20), f"{method.upper()} training curves", fill="#202124", font=FONT)
     draw_chart(draw, (50, 70, 580, 630), "Total and forget loss", loss_history, (("loss", COLORS["loss"]), ("forget_loss", COLORS["forget_loss"])))
     draw_chart(draw, (635, 70, 1165, 630), "Preservation loss", loss_history, (("preserve_loss", COLORS["preserve_loss"]),))
     if ism_history: draw_chart(draw, (1220, 70, 1750, 630), "Validation ISM", ism_history, (("forget_ism", COLORS["forget_ism"]), ("retain_ism", COLORS["retain_ism"])))
@@ -68,10 +68,27 @@ def write_fixed_condition_grid(before: GeneratedSamples, after: GeneratedSamples
     image.save(output_path)
 
 
-def create_summary_visuals(before: GeneratedSamples, after: GeneratedSamples, conditions: EvaluationConditions, output_dir: Path) -> tuple[Path, Path]:
+def create_summary_visuals(before: GeneratedSamples, after: GeneratedSamples, conditions: EvaluationConditions, output_dir: Path, method: str = "piu") -> tuple[Path | None, Path]:
     summary_dir = output_dir / "summary"
     summary_dir.mkdir(parents=True, exist_ok=True)
     curves_path, grid_path = summary_dir / "training_curves.png", summary_dir / "fixed_conditions.png"
-    write_training_curves(output_dir / "checkpoints" / "loss_history.jsonl", output_dir / "checkpoints" / "ism_history.jsonl", curves_path)
+    if method == "uce": curves_path = None
+    else: write_training_curves(output_dir / "checkpoints" / "loss_history.jsonl", output_dir / "checkpoints" / "ism_history.jsonl", curves_path, method)
     write_fixed_condition_grid(before, after, conditions, grid_path)
     return curves_path, grid_path
+
+
+def write_method_comparison(samples: dict[str, GeneratedSamples], conditions: EvaluationConditions, output_dir: Path) -> None:
+    """Compare the same conditions across the original model and edited models."""
+    tile, label_width, header, row_height = 128, 200, 40, 148
+    for partition in ("forget", "retain"):
+        labels, seeds = getattr(conditions, f"{partition}_labels"), getattr(conditions, f"{partition}_seeds")
+        canvas = Image.new("RGB", (label_width + tile * len(samples), header + row_height * len(labels)), "white")
+        draw = ImageDraw.Draw(canvas)
+        for column, (method, images) in enumerate(samples.items()):
+            draw.text((label_width + column * tile + 8, 12), method.upper(), fill="#202124", font=FONT)
+            for row, path in enumerate(getattr(images, partition)):
+                top = header + row * row_height
+                if column == 0: draw.text((8, top + 50), f"{row:02d} ID {labels[row].item()} / seed {seeds[row]}", fill="#5f6368", font=FONT)
+                paste_image(canvas, path, (label_width + column * tile, top), tile)
+        canvas.save(output_dir / f"comparison_{partition}.png")

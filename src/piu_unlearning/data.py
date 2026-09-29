@@ -11,7 +11,7 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset, RandomSampler
 
 if TYPE_CHECKING:
-    from piu_unlearning.config import PIUConfig
+    from piu_unlearning.config import ESDConfig, PIUConfig, RunConfig
 
 
 @dataclass(frozen=True)
@@ -64,7 +64,7 @@ class DirichletEmbeddingDataset(Dataset[torch.Tensor]):
         return F.normalize((self.embeddings[source_indices] * weights.unsqueeze(1)).sum(dim=0), dim=0)
 
 
-def load_prepared_data(config: PIUConfig) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+def load_prepared_data(config: RunConfig) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     embeddings = torch.from_numpy(np.load(config.embeddings_path)).float()
     labels = torch.from_numpy(np.load(config.labels_path)).long()
     centroids = torch.from_numpy(np.load(config.centroids_path)).float()
@@ -72,7 +72,7 @@ def load_prepared_data(config: PIUConfig) -> tuple[torch.Tensor, torch.Tensor, t
     return embeddings, labels, centroids, centroid_labels
 
 
-def create_experiment_split(embeddings: torch.Tensor, labels: torch.Tensor, centroids: torch.Tensor, centroid_labels: torch.Tensor, config: PIUConfig) -> ExperimentSplit:
+def create_experiment_split(embeddings: torch.Tensor, labels: torch.Tensor, centroids: torch.Tensor, centroid_labels: torch.Tensor, config: RunConfig) -> ExperimentSplit:
     """Create disjoint training and evaluation partitions for one identity."""
     generator = torch.Generator().manual_seed(config.seed)
     forget_indices = torch.where(labels == config.identity_id)[0]
@@ -80,6 +80,7 @@ def create_experiment_split(embeddings: torch.Tensor, labels: torch.Tensor, cent
     num_forget_validation = max(1, int(forget_indices.numel() * config.forget_validation_ratio))
     forget_train_indices = forget_indices[:-num_forget_validation]
     forget_validation_indices = forget_indices[-num_forget_validation:]
+    if not forget_train_indices.numel(): raise ValueError(f"Identity {config.identity_id} needs at least two samples for a train/validation split")
 
     retain_identity_ids = torch.unique(labels[labels != config.identity_id])
     forced_train_ids = torch.empty(0, dtype=labels.dtype)
@@ -105,7 +106,7 @@ def create_experiment_split(embeddings: torch.Tensor, labels: torch.Tensor, cent
     )
 
 
-def create_evaluation_conditions(split: ExperimentSplit, config: PIUConfig) -> EvaluationConditions:
+def create_evaluation_conditions(split: ExperimentSplit, config: RunConfig) -> EvaluationConditions:
     """Create conditions and seeds reused before and after unlearning."""
     rng = np.random.default_rng(config.seed)
     forget_conditions = []
@@ -157,17 +158,26 @@ def write_split_manifest(split: ExperimentSplit, path: Path) -> None:
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
-def create_embedding_loaders(split: ExperimentSplit, config: PIUConfig) -> tuple[DataLoader[torch.Tensor], DataLoader[torch.Tensor]]:
-    forget_dataset = DirichletEmbeddingDataset(split.forget_train.embeddings)
+def create_embedding_loaders(split: ExperimentSplit, config: PIUConfig | ESDConfig) -> tuple[DataLoader[torch.Tensor], DataLoader[torch.Tensor] | None]:
+    forget_embeddings = split.forget_train.embeddings
+    if config.forget_sampling == "dirichlet":
+        forget_dataset = DirichletEmbeddingDataset(forget_embeddings)
+    elif config.forget_sampling == "centroid":
+        forget_dataset = F.normalize(forget_embeddings.mean(dim=0, keepdim=True), dim=1)
+    else:
+        forget_dataset = forget_embeddings
     num_samples = config.training_steps * config.gradient_accumulation_steps * config.batch_size
     forget_sampler = RandomSampler(forget_dataset, replacement=True, num_samples=num_samples, generator=torch.Generator().manual_seed(config.seed))
-    retain_sampler = RandomSampler(split.retain_train.embeddings, replacement=True, num_samples=num_samples, generator=torch.Generator().manual_seed(config.seed + 1))
     forget_loader = DataLoader(forget_dataset, batch_size=config.batch_size, sampler=forget_sampler)
-    retain_loader = DataLoader(split.retain_train.embeddings, batch_size=config.batch_size, sampler=retain_sampler)
+    retain_loader = None
+    if config.preservation_weight > 0:
+        if not len(split.retain_train.embeddings): raise ValueError("Preservation requires nonempty retain training data")
+        retain_sampler = RandomSampler(split.retain_train.embeddings, replacement=True, num_samples=num_samples, generator=torch.Generator().manual_seed(config.seed + 1))
+        retain_loader = DataLoader(split.retain_train.embeddings, batch_size=config.batch_size, sampler=retain_sampler)
     return forget_loader, retain_loader
 
 
-def select_anchor_embedding(split: ExperimentSplit, config: PIUConfig) -> tuple[torch.Tensor, int, float]:
+def select_anchor_embedding(split: ExperimentSplit, config: RunConfig) -> tuple[torch.Tensor, int, float]:
     """Select a retained identity centroid from the configured proximity band."""
     embeddings = split.retain_train.embeddings
     labels = split.retain_train.labels

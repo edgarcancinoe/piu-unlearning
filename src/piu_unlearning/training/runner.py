@@ -1,80 +1,79 @@
 from __future__ import annotations
 
 import json
+from collections import defaultdict
+from dataclasses import asdict
 from pathlib import Path
 from typing import TYPE_CHECKING, Callable, Iterator
 
 import torch
 from tqdm.auto import tqdm
 
-from piu_unlearning.training.losses import PIU
+from piu_unlearning.training.losses import LossOutput
 
 if TYPE_CHECKING:
-    from diffusers import DDPMScheduler, UNet2DConditionModel
+    from diffusers import UNet2DConditionModel
     from torch.utils.data import DataLoader
+    from piu_unlearning.config import ESDConfig, PIUConfig
 
-    from piu_unlearning.models.arc2face import Arc2FaceIdentityConditioner
 
-
-def batches_forever(loader: DataLoader[torch.Tensor]) -> Iterator[torch.Tensor]:
+def batches_forever(loader: DataLoader) -> Iterator:
+    if not len(loader): raise ValueError("Training loader is empty")
     while True:
         yield from loader
 
 
-def train_piu(
-    piu: PIU,
-    forget_loader: DataLoader[torch.Tensor],
-    retain_loader: DataLoader[torch.Tensor],
-    anchor_conditioning: torch.Tensor,
-    trainable_unet: UNet2DConditionModel,
-    frozen_unet: UNet2DConditionModel,
-    scheduler: DDPMScheduler,
-    identity_conditioner: Arc2FaceIdentityConditioner,
-    device: torch.device,
-    output_dir: Path,
-    training_steps: int,
-    gradient_accumulation_steps: int,
-    evaluate_ism: Callable[[int], tuple[float, float]] | None,
-    evaluation_every: int,
-    learning_rate: float,
-    weight_decay: float,
-    log_every: int,
-) -> Path:
-    trainable_unet.train()
+def train_model(model: UNet2DConditionModel, compute_loss: Callable, forget_loader: DataLoader, retain_loader: DataLoader | None, config: PIUConfig | ESDConfig, evaluate_ism: Callable[[int], tuple[float, float]] | None = None) -> Path:
+    """Optimize a supplied objective; methods own their conditioning and loss computation."""
+    model.train()
+    output_dir = config.output_dir / "checkpoints"
     output_dir.mkdir(parents=True, exist_ok=True)
-    optimizer = torch.optim.AdamW((parameter for parameter in trainable_unet.parameters() if parameter.requires_grad), lr=learning_rate, weight_decay=weight_decay)
+    optimizer_type = {"adam": torch.optim.Adam, "adamw": torch.optim.AdamW}[config.optimizer]
+    optimizer = optimizer_type((parameter for parameter in model.parameters() if parameter.requires_grad), lr=config.learning_rate, weight_decay=config.weight_decay)
     loss_history_path = output_dir / "loss_history.jsonl"
     ism_history_path = output_dir / "ism_history.jsonl"
     loss_history_path.write_text("", encoding="utf-8")
-    if evaluation_every: ism_history_path.write_text("", encoding="utf-8")
+    ism_history_path.write_text("", encoding="utf-8")
     forget_batches = batches_forever(forget_loader)
-    retain_batches = batches_forever(retain_loader)
-    with tqdm(total=training_steps * gradient_accumulation_steps, desc="Training PIU", unit="microbatch", dynamic_ncols=True) as progress:
-        for step in range(1, training_steps + 1):
+    retain_batches = batches_forever(retain_loader) if retain_loader is not None else None
+    title = f"Training {config.method.upper()}"
+    with tqdm(total=config.training_steps * config.gradient_accumulation_steps, desc=title, unit="microbatch", dynamic_ncols=True) as progress:
+        for step in range(1, config.training_steps + 1):
             optimizer.zero_grad(set_to_none=True)
-            total_loss = total_forget_loss = total_preserve_loss = 0.0
-            for micro_step in range(1, gradient_accumulation_steps + 1):
-                loss, forget_loss, preserve_loss = piu.compute_piu_loss(next(forget_batches), next(retain_batches), anchor_conditioning, trainable_unet, frozen_unet, scheduler, identity_conditioner, device)
-                (loss / gradient_accumulation_steps).backward()
-                total_loss += loss.item() / gradient_accumulation_steps
-                total_forget_loss += forget_loss.item() / gradient_accumulation_steps
-                total_preserve_loss += preserve_loss.item() / gradient_accumulation_steps
-                progress.set_postfix(step=f"{step}/{training_steps}", micro=f"{micro_step}/{gradient_accumulation_steps}", loss=f"{loss.item():.4f}", forget=f"{forget_loss.item():.4f}", preserve=f"{preserve_loss.item():.4f}")
+            totals = defaultdict(float)
+            for micro_step in range(1, config.gradient_accumulation_steps + 1):
+                result: LossOutput = compute_loss(next(forget_batches), next(retain_batches) if retain_batches is not None else None)
+                (result.loss / config.gradient_accumulation_steps).backward()
+                metrics = {"loss": result.loss, **result.metrics}
+                for name, value in metrics.items(): totals[name] += value.detach().item() / config.gradient_accumulation_steps
+                progress.set_postfix(step=f"{step}/{config.training_steps}", micro=f"{micro_step}/{config.gradient_accumulation_steps}", **{name: f"{value.item():.4f}" for name, value in metrics.items()})
                 progress.update()
             optimizer.step()
-            with loss_history_path.open("a", encoding="utf-8") as history: history.write(json.dumps({"step": step, "loss": total_loss, "forget_loss": total_forget_loss, "preserve_loss": total_preserve_loss}) + "\n")
+            with loss_history_path.open("a", encoding="utf-8") as history: history.write(json.dumps({"step": step, **totals}) + "\n")
 
-            if evaluate_ism is not None and evaluation_every and step % evaluation_every == 0:
+            if evaluate_ism is not None and config.evaluation_every and step % config.evaluation_every == 0:
                 progress.set_description("Evaluating ISM")
                 forget_ism, retain_ism = evaluate_ism(step)
                 with ism_history_path.open("a", encoding="utf-8") as history: history.write(json.dumps({"step": step, "forget_ism": forget_ism, "retain_ism": retain_ism}) + "\n")
-                progress.write(f"step={step:04d}/{training_steps:04d} forget_ism={forget_ism:.6f} retain_ism={retain_ism:.6f}")
-                trainable_unet.train()
-                progress.set_description("Training PIU")
+                progress.write(f"step={step:04d}/{config.training_steps:04d} forget_ism={forget_ism:.6f} retain_ism={retain_ism:.6f}")
+                model.train()
+                progress.set_description(title)
 
-            if step == 1 or step % log_every == 0 or step == training_steps:
-                progress.write(f"step={step:04d}/{training_steps:04d} loss={total_loss:.6f} forget={total_forget_loss:.6f} preserve={total_preserve_loss:.6f}")
+            if step == 1 or step % config.log_every == 0 or step == config.training_steps:
+                values = " ".join(f"{name}={value:.6f}" for name, value in totals.items())
+                progress.write(f"step={step:04d}/{config.training_steps:04d} {values}")
 
-    checkpoint_path = output_dir / "piu_unet.pt"
-    torch.save({"unet_state_dict": trainable_unet.state_dict(), "optimizer_state_dict": optimizer.state_dict(), "training_steps": training_steps, "gradient_accumulation_steps": gradient_accumulation_steps, "preservation_weight": piu.preservation_weight, "negative_guidance_scale": piu.negative_guidance_scale}, checkpoint_path)
+    checkpoint_path = output_dir / f"{config.method}_unet.pt"
+    checkpoint = {
+        "method": config.method,
+        "config": json.loads(json.dumps(asdict(config), default=str)),
+        "unet_state_dict": model.state_dict(),
+        "optimizer_state_dict": optimizer.state_dict(),
+        "training_steps": config.training_steps,
+        "gradient_accumulation_steps": config.gradient_accumulation_steps,
+        "preservation_weight": config.preservation_weight,
+        "negative_guidance_scale": config.negative_guidance_scale,
+        "trainable_parameters": [name for name, parameter in model.named_parameters() if parameter.requires_grad],
+    }
+    torch.save(checkpoint, checkpoint_path)
     return checkpoint_path

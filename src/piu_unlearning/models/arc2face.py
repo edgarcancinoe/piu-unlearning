@@ -13,7 +13,7 @@ if TYPE_CHECKING:
     from diffusers import StableDiffusionPipeline, UNet2DConditionModel
     from transformers.tokenization_utils_base import PreTrainedTokenizerBase
 
-    from piu_unlearning.config import PIUConfig
+    from piu_unlearning.config import RunConfig
     from piu_unlearning.data import EvaluationConditions
 
 
@@ -38,12 +38,14 @@ class Arc2FaceIdentityConditioner:
         return self.text_encoder(input_ids=input_ids, input_token_embs=token_embeddings)[0]
 
 
-def select_trainable_layers(unet: UNet2DConditionModel, surgical_layers: tuple[str, ...]) -> None:
+def select_trainable_layers(unet: UNet2DConditionModel, surgical_layers: tuple[str, ...], train_mode: str = "surgical") -> None:
+    if train_mode not in ("surgical", "x", "full"): raise ValueError(f"Unknown train_mode: {train_mode}")
     for name, parameter in unet.named_parameters():
-        parameter.requires_grad = "attn2" in name and any(layer in name for layer in surgical_layers)
+        parameter.requires_grad = train_mode == "full" or ("attn2" in name and (train_mode == "x" or any(layer in name for layer in surgical_layers)))
+    if not any(parameter.requires_grad for parameter in unet.parameters()): raise ValueError("Layer selection matched no trainable parameters")
 
 
-def load_arc2face(config: PIUConfig) -> StableDiffusionPipeline:
+def load_arc2face(config: RunConfig) -> StableDiffusionPipeline:
     from piu_unlearning.models.arc2face_text_encoder import CLIPTextModelWrapper
     from diffusers import DPMSolverMultistepScheduler, StableDiffusionPipeline, UNet2DConditionModel
 
@@ -54,13 +56,14 @@ def load_arc2face(config: PIUConfig) -> StableDiffusionPipeline:
     pipeline.text_encoder.requires_grad_(False)
     pipeline.vae.requires_grad_(False)
 
-    select_trainable_layers(pipeline.unet, config.surgical_layers)
+    if config.method == "uce": pipeline.unet.requires_grad_(False)
+    else: select_trainable_layers(pipeline.unet, config.surgical_layers, config.train_mode)
 
     return pipeline.to(config.device)
 
 
 @torch.no_grad()
-def generate_conditioned_samples(model: StableDiffusionPipeline, embeddings: torch.Tensor, seeds: tuple[int, ...], config: PIUConfig, output_dir: Path, description: str) -> list[Path]:
+def generate_conditioned_samples(model: StableDiffusionPipeline, embeddings: torch.Tensor, seeds: tuple[int, ...], config: RunConfig, output_dir: Path, description: str) -> list[Path]:
     """Generate one image for each identity embedding and seed."""
     identity_conditioner = Arc2FaceIdentityConditioner(model.tokenizer, model.text_encoder)
     identity_conditioning = identity_conditioner.encode(embeddings.to(model.device))
@@ -76,7 +79,7 @@ def generate_conditioned_samples(model: StableDiffusionPipeline, embeddings: tor
     return image_paths
 
 
-def generate_evaluation_samples(model: StableDiffusionPipeline, conditions: EvaluationConditions, config: PIUConfig, output_dir: Path, phase: str) -> GeneratedSamples:
+def generate_evaluation_samples(model: StableDiffusionPipeline, conditions: EvaluationConditions, config: RunConfig, output_dir: Path, phase: str) -> GeneratedSamples:
     """Generate the forget and retain images for one evaluation phase."""
     forget = generate_conditioned_samples(model, conditions.forget_embeddings, conditions.forget_seeds, config, output_dir / "forget", f"{phase}: forget")
     retain = generate_conditioned_samples(model, conditions.retain_embeddings, conditions.retain_seeds, config, output_dir / "retain", f"{phase}: retain")

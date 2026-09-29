@@ -86,9 +86,23 @@ piu-demo --identity-id YOUR_ID --data-dir data/celebahq_512_recomputed --output-
 
 ## Demo outputs
 
-Results are written to `outputs/demo` unless `--output-dir` is set. Each run saves the resolved configuration, data split, U-Net checkpoint, before/after images, and evaluation metrics. Training curves and aligned comparison grids are saved under `summary/`.
+Results are written to `outputs/demo` unless `--output-dir` is set. Each run saves the resolved configuration, data split, anchor metadata and embedding, U-Net checkpoint (`piu_unet.pt`), before/after images, and evaluation metrics. Training curves and aligned comparison grids are saved under `summary/`.
 
 Identity similarity (ISM) is evaluated every 50 optimizer steps by default. Use `--evaluation-every 0` to disable intermediate evaluation, or pass another interval. See `piu-demo --help` for the remaining options.
+
+## Baselines
+
+Arc2Face adaptations of [ESD](docs/baselines/ESD.md) and [UCE](docs/baselines/UCE.md) are also available. Their commands, settings, and reproduction notes are documented separately.
+
+Use the [comparison launcher](baselines/README.md) to run the supported methods sequentially with shared evaluation conditions.
+
+## Development
+
+Method implementations live in `src/piu_unlearning/methods/`; shared training code lives in `src/piu_unlearning/training/`. CPU tests use small models without downloading weights:
+
+```bash
+python -m unittest discover -s tests -v
+```
 
 ## License and acknowledgments
 
