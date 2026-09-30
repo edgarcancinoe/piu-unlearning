@@ -5,8 +5,11 @@ from pathlib import Path
 from unittest.mock import patch
 
 import numpy as np
+import torch
 from PIL import Image
 
+from piu_unlearning.config import WIDConfig
+from piu_unlearning.data import load_image_manifest
 from piu_unlearning.prepare_data import images_main, prepare_image_manifest
 
 
@@ -105,6 +108,25 @@ class ImageVerificationTests(unittest.TestCase):
             images_main()
         self.assertEqual(self.calls, [1])
         self.assertFalse((self.root / "image_manifest.json").exists())
+
+    def test_alignment_boundary_is_shared_by_verification_and_training(self):
+        def extract(image):
+            index = int(image[0, 0, 0])
+            cosine = 0.988 if index == 1 else 1.0
+            return cosine * self.embeddings[index] + np.sqrt(1 - cosine**2) * self.embeddings[(index + 1) % 3]
+
+        manifest = self.run_verification(extract)
+        config = WIDConfig(identity_id=0, data_dir=self.root)
+        load_image_manifest(config, torch.tensor([1]))
+        self.assertAlmostEqual(json.loads(manifest.read_text())["alignment"]["min_cosine"], 0.988, places=5)
+        self.context["version"] = "changed"
+
+        def too_low(image):
+            index = int(image[0, 0, 0])
+            cosine = 0.984 if index == 1 else 1.0
+            return cosine * self.embeddings[index] + np.sqrt(1 - cosine**2) * self.embeddings[(index + 1) % 3]
+
+        with self.assertRaisesRegex(ValueError, "1 image verification failures"): self.run_verification(too_low)
 
 
 if __name__ == "__main__": unittest.main()

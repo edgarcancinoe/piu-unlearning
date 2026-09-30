@@ -28,6 +28,7 @@ RECOGNIZER_REPO, RECOGNIZER_FILE = "FoivosPar/Arc2Face", "arcface.onnx"
 RECOGNIZER_REVISION = "321709b2e9697ea2a5bd06c8a51b340592333e1e"
 DBSCAN_EPS = 0.35
 DBSCAN_MIN_SAMPLES = 2
+IMAGE_ALIGNMENT_MIN_COSINE = 0.985
 
 
 def sha256(path: Path) -> str:
@@ -124,7 +125,7 @@ def verify_image_row(path: Path, stored: np.ndarray, extractor: ArcFaceExtractor
     denominator = np.linalg.norm(embedding) * np.linalg.norm(stored)
     similarity = float(np.dot(embedding, stored) / denominator) if denominator else float("nan")
     cosine = similarity if np.isfinite(similarity) else None
-    error = None if cosine is not None and cosine >= 0.99 else "Image/embedding mismatch"
+    error = None if cosine is not None and cosine >= IMAGE_ALIGNMENT_MIN_COSINE else "Image/embedding mismatch"
     return {"sha256": digest, "cosine": cosine, "error": error}
 
 
@@ -139,7 +140,7 @@ def prepare_image_manifest(data_dir: Path, image_paths: Path, image_root: Path, 
     indices = list(range(len(names))) if check_rows is None else list(dict.fromkeys(check_rows))
     if not indices or any(index < 0 or index >= len(names) for index in indices): raise ValueError("Check rows must be nonempty, zero-based indices within the dataset")
     hashes = {"embeddings_sha256": sha256(data_dir / "embeddings.npy"), "labels_sha256": sha256(data_dir / "labels.npy"), "source_paths_sha256": sha256(image_paths)}
-    metadata = {"version": 1, "threshold": 0.99, **hashes, "extractor": verification_context}
+    metadata = {"version": 1, "threshold": IMAGE_ALIGNMENT_MIN_COSINE, **hashes, "extractor": verification_context}
     context = hashlib.sha256(json.dumps(metadata, sort_keys=True).encode()).hexdigest()
     cache_path = data_dir / "image_verification.jsonl"
     cached = load_verification_cache(cache_path, context)

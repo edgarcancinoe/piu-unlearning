@@ -22,7 +22,7 @@ piu-prepare-images --data-dir data/celebahq_512 \
   --image-root /path/to/celebahq_images --device cuda
 ```
 
-The command uses the file names from that mapping in exactly the supplied order. It verifies every image against its stored ArcFace embedding (cosine at least `0.99`), then writes `image_manifest.json` with image, embedding, and label hashes. It does not replace embeddings or recluster identities. Verification is empirical: a low score can reflect extraction/backend differences rather than a wrong filename, and a passing score cannot distinguish all near-identical images. Retain the original mapping's provenance.
+The command uses the file names from that mapping in exactly the supplied order. It verifies every image against its stored ArcFace embedding (cosine at least `0.985`), then writes `image_manifest.json` with image, embedding, and label hashes. It does not replace embeddings or recluster identities. Verification is empirical: a low score can reflect extraction/backend differences rather than a wrong filename, and a passing score cannot distinguish all near-identical images. Retain the original mapping's provenance.
 
 Checks are flushed to `image_verification.jsonl` after each row. Rerunning the command reuses passing checks only when the image hashes, data/mapping hashes, and recorded model/runtime settings still match; failed rows are retried. A completed scan saves all failures in `image_verification_report.json` and writes no new training manifest unless every row passes. Older versions did not save partial progress, so their interrupted scans cannot be resumed.
 
