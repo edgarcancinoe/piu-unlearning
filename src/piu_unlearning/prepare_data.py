@@ -84,26 +84,92 @@ def materialize_images(shards: list[Path], names: list[str], image_root: Path) -
     if found != wanted: raise ValueError(f"Dataset is missing {len(wanted - found)} requested images")
 
 
-def prepare_image_manifest(data_dir: Path, image_paths: Path, image_root: Path, extractor: ArcFaceExtractor) -> Path:
-    """Bind explicitly ordered image names to embeddings after checking every pair."""
+def image_verification_context(models_root: Path, extractor: ArcFaceExtractor) -> dict:
+    from importlib.metadata import version
+    import onnxruntime
+    import torch
+
+    hardware = torch.cuda.get_device_name(torch.device(extractor.device)) if extractor.device.startswith("cuda") else "cpu"
+    versions = {"insightface": version("insightface"), "onnxruntime": onnxruntime.__version__, "torch": torch.__version__, "numpy": np.__version__, "pillow": version("pillow")}
+    models = {path.name: sha256(path) for path in sorted((models_root / "models" / "antelopev2").glob("*.onnx"))}
+    providers = {name: model.session.get_provider_options() for name, model in extractor.app.models.items()}
+    return {"device": extractor.device, "hardware": hardware, "versions": versions, "models": models, "providers": providers, "det_size": DET_SIZE, "det_thresh": DET_THRESH}
+
+
+def load_verification_cache(path: Path, context: str) -> dict:
+    cached = {}
+    if not path.exists(): return cached
+    with path.open("r+b") as stream:
+        while True:
+            start, line = stream.tell(), stream.readline()
+            if not line: break
+            # An interrupted append must not corrupt the next run's records.
+            if not line.endswith(b"\n"):
+                stream.truncate(start)
+                break
+            record = json.loads(line)
+            if record.get("context") == context and "index" in record: cached[record["index"]] = record
+    return cached
+
+
+def verify_image_row(path: Path, stored: np.ndarray, extractor: ArcFaceExtractor) -> dict:
     from PIL import Image
+
+    try:
+        digest = sha256(path)
+        with Image.open(path) as image: embedding = extractor(np.asarray(image.convert("RGB")))
+    except OSError as error:
+        return {"sha256": None, "cosine": None, "error": str(error)}
+    if embedding is None: return {"sha256": digest, "cosine": None, "error": "No face found"}
+    denominator = np.linalg.norm(embedding) * np.linalg.norm(stored)
+    similarity = float(np.dot(embedding, stored) / denominator) if denominator else float("nan")
+    cosine = similarity if np.isfinite(similarity) else None
+    error = None if cosine is not None and cosine >= 0.99 else "Image/embedding mismatch"
+    return {"sha256": digest, "cosine": cosine, "error": error}
+
+
+def prepare_image_manifest(data_dir: Path, image_paths: Path, image_root: Path, extractor: ArcFaceExtractor, *, verification_context: dict | None = None, check_rows: list[int] | None = None) -> Path:
+    """Audit all requested pairs; publish a manifest only after a complete passing audit."""
     from tqdm import tqdm
 
     names = [Path(line.strip()).name for line in image_paths.read_text(encoding="utf-8").splitlines()]
     embeddings, labels = np.load(data_dir / "embeddings.npy"), np.load(data_dir / "labels.npy")
     if len(names) != len(embeddings) or len(names) != len(labels): raise ValueError("Image names, embeddings, and labels must have the same row count")
     if any(not name for name in names) or len(set(names)) != len(names): raise ValueError("Image names must be nonempty and unique; use a flat image directory")
-    rows, similarities = [], []
-    for index, name in enumerate(tqdm(names, desc="Verifying image/embedding rows")):
-        path = image_root / name
-        with Image.open(path) as image: embedding = extractor(np.asarray(image.convert("RGB")))
-        if embedding is None: raise ValueError(f"No face found in row {index}: {name}")
-        stored = embeddings[index].astype(np.float32)
-        similarity = float(np.dot(embedding, stored) / (np.linalg.norm(embedding) * np.linalg.norm(stored)))
-        if not np.isfinite(similarity) or similarity < 0.99: raise ValueError(f"Image/embedding mismatch at row {index}: {name}, cosine={similarity:.6f}")
-        similarities.append(similarity)
-        rows.append({"path": name, "sha256": sha256(path)})
-    manifest = {"version": 1, "image_root": os.path.relpath(image_root.resolve(), data_dir.resolve()), "embeddings_sha256": sha256(data_dir / "embeddings.npy"), "labels_sha256": sha256(data_dir / "labels.npy"), "source_paths_sha256": sha256(image_paths), "alignment": {"min_cosine": min(similarities), "verified_rows": len(rows)}, "rows": rows}
+    indices = list(range(len(names))) if check_rows is None else list(dict.fromkeys(check_rows))
+    if not indices or any(index < 0 or index >= len(names) for index in indices): raise ValueError("Check rows must be nonempty, zero-based indices within the dataset")
+    hashes = {"embeddings_sha256": sha256(data_dir / "embeddings.npy"), "labels_sha256": sha256(data_dir / "labels.npy"), "source_paths_sha256": sha256(image_paths)}
+    metadata = {"version": 1, "threshold": 0.99, **hashes, "extractor": verification_context}
+    context = hashlib.sha256(json.dumps(metadata, sort_keys=True).encode()).hexdigest()
+    cache_path = data_dir / "image_verification.jsonl"
+    cached = load_verification_cache(cache_path, context)
+    if verification_context is None: cached = {}  # Unidentified custom extractors cannot safely reuse checks.
+    records, reused = [], 0
+    with cache_path.open("a", encoding="utf-8") as log, tqdm(indices, desc="Verifying image/embedding rows") as progress:
+        log.write(json.dumps({"context": context, "metadata": metadata}) + "\n")
+        log.flush()
+        for index in progress:
+            name, record = names[index], cached.get(index)
+            path = image_root / name
+            if record and record["error"] is None and path.is_file() and record["sha256"] == sha256(path):
+                reused += 1
+            else:
+                record = {"context": context, "index": index, "path": name, **verify_image_row(path, embeddings[index].astype(np.float32), extractor)}
+                log.write(json.dumps(record, allow_nan=False) + "\n")
+                log.flush()
+            records.append(record)
+            if check_rows is not None or record["error"] is not None:
+                progress.write(f"row={index} file={name} cosine={record['cosine']} status={record['error'] or 'passed'}")
+    failures = [record for record in records if record["error"] is not None]
+    report_path = data_dir / ("image_verification_report.json" if check_rows is None else "image_verification_check.json")
+    report = {"metadata": metadata, "checked_rows": len(records), "reused_rows": reused, "passed_rows": len(records) - len(failures), "failures": failures}
+    report_path.write_text(json.dumps(report, indent=2, allow_nan=False) + "\n", encoding="utf-8")
+    if failures:
+        first = failures[0]
+        raise ValueError(f"{len(failures)} image verification failures; first mismatch at row {first['index']}: {first['path']}, cosine={first['cosine']}. No new manifest written. See {report_path}; passing checks are saved in {cache_path}")
+    if check_rows is not None: return report_path
+    rows = [{"path": record["path"], "sha256": record["sha256"]} for record in records]
+    manifest = {"version": 1, "image_root": os.path.relpath(image_root.resolve(), data_dir.resolve()), **hashes, "verification": metadata, "alignment": {"min_cosine": min(record["cosine"] for record in records), "verified_rows": len(rows)}, "rows": rows}
     path = data_dir / "image_manifest.json"
     path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
     return path
@@ -118,15 +184,19 @@ def images_main() -> None:
     parser.add_argument("--revision", default=DATASET_REVISION)
     parser.add_argument("--cache-dir", type=Path)
     parser.add_argument("--device", default="cpu", help="Device used for one-time image/embedding verification.")
+    parser.add_argument("--check-rows", type=int, nargs="+", help="Diagnose only these zero-based rows; does not create a training manifest.")
     args = parser.parse_args()
+    if args.check_rows is not None and args.download_images: parser.error("--check-rows uses existing local images; omit --download-images")
     paths = args.image_paths or args.data_dir / "file_names.txt"
     if not paths.is_file(): parser.error("Provide --image-paths with the original row-aligned mapping; canonical ordering cannot be guessed")
     root = args.image_root or args.data_dir / "images"
     if args.download_images:
         names = [Path(line.strip()).name for line in paths.read_text(encoding="utf-8").splitlines()]
         materialize_images(download_dataset(args.revision, args.cache_dir), names, root)
-    extractor = ArcFaceExtractor(args.data_dir / "face_models", args.device)
-    print(f"Verified image manifest: {prepare_image_manifest(args.data_dir, paths, root, extractor)}")
+    models_root = args.data_dir / "face_models"
+    extractor = ArcFaceExtractor(models_root, args.device)
+    result = prepare_image_manifest(args.data_dir, paths, root, extractor, verification_context=image_verification_context(models_root, extractor), check_rows=args.check_rows)
+    print(f"{'Verification report (no manifest created)' if args.check_rows is not None else 'Verified image manifest'}: {result}")
 
 
 def download_dataset(revision: str, cache_dir: Path | None) -> list[Path]:

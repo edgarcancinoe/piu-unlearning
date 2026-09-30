@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -43,14 +44,15 @@ class EvaluationReport:
     after: PhaseMetrics
 
 
-def extract_face_embeddings(image_paths: list[Path], extractor: ArcFaceExtractor, description: str) -> torch.Tensor:
+def extract_face_embeddings(image_paths: list[Path], extractor: ArcFaceExtractor, description: str, embedding_dim: int = 512) -> torch.Tensor:
     from PIL import Image
 
     embeddings = []
     for image_path in tqdm(image_paths, desc=description, unit="image"):
         embedding = extractor(np.asarray(Image.open(image_path).convert("RGB")))
         if embedding is None:
-            raise RuntimeError(f"No face detected in generated image: {image_path}")
+            logging.getLogger(__name__).warning("No face detected in generated image: %s; scoring as zero ISM and unrecognized identity", image_path)
+            embedding = np.zeros(embedding_dim, dtype=np.float32)
         embeddings.append(torch.from_numpy(embedding))
     return torch.stack(embeddings).float()
 
@@ -65,14 +67,14 @@ def compute_srk(forget_embeddings: torch.Tensor, forget_labels: torch.Tensor, re
     normalized_centroids = F.normalize(centroids, dim=1)
     forget_predictions = centroid_labels[(F.normalize(forget_embeddings, dim=1) @ normalized_centroids.T).argmax(dim=1)]
     retain_predictions = centroid_labels[(F.normalize(retain_embeddings, dim=1) @ normalized_centroids.T).argmax(dim=1)]
-    forget_accuracy = (forget_predictions == forget_labels).float().mean().item()
-    retain_accuracy = (retain_predictions == retain_labels).float().mean().item()
+    forget_accuracy = ((forget_predictions == forget_labels) & forget_embeddings.any(dim=1)).float().mean().item()
+    retain_accuracy = ((retain_predictions == retain_labels) & retain_embeddings.any(dim=1)).float().mean().item()
     return SRKMetrics(forget_accuracy=forget_accuracy, retain_accuracy=retain_accuracy, score=retain_accuracy / (forget_accuracy + epsilon))
 
 
 def evaluate_phase(samples: GeneratedSamples, conditions: EvaluationConditions, split: ExperimentSplit, extractor: ArcFaceExtractor, phase: str) -> PhaseMetrics:
-    forget_embeddings = extract_face_embeddings(samples.forget, extractor, f"{phase}: forget embeddings")
-    retain_embeddings = extract_face_embeddings(samples.retain, extractor, f"{phase}: retain embeddings")
+    forget_embeddings = extract_face_embeddings(samples.forget, extractor, f"{phase}: forget embeddings", split.centroids.shape[1])
+    retain_embeddings = extract_face_embeddings(samples.retain, extractor, f"{phase}: retain embeddings", split.centroids.shape[1])
     forget = SplitMetrics(ism=compute_ism(forget_embeddings, conditions.forget_labels, split.centroids, split.centroid_labels))
     retain = SplitMetrics(ism=compute_ism(retain_embeddings, conditions.retain_labels, split.centroids, split.centroid_labels))
     srk = compute_srk(forget_embeddings, conditions.forget_labels, retain_embeddings, conditions.retain_labels, split.centroids, split.centroid_labels)
