@@ -171,14 +171,15 @@ def create_embedding_loaders(split: ExperimentSplit, config: PIUConfig) -> tuple
 
 
 def create_training_loaders(forget_dataset: Dataset | torch.Tensor, retain_embeddings: Dataset | torch.Tensor, config: TrainingConfig) -> tuple[DataLoader, DataLoader | None]:
+    batch_size = config.gradient_batch_size if config.method == "siss" else config.batch_size
     num_samples = config.training_steps * config.gradient_accumulation_steps * config.batch_size
     forget_sampler = RandomSampler(forget_dataset, replacement=True, num_samples=num_samples, generator=torch.Generator().manual_seed(config.seed))
-    forget_loader = DataLoader(forget_dataset, batch_size=config.batch_size, sampler=forget_sampler)
+    forget_loader = DataLoader(forget_dataset, batch_size=batch_size, sampler=forget_sampler)
     retain_loader = None
     if config.method == "siss" or config.preservation_weight > 0:
         if not len(retain_embeddings): raise ValueError("Preservation requires nonempty retain training data")
         retain_sampler = RandomSampler(retain_embeddings, replacement=True, num_samples=num_samples, generator=torch.Generator().manual_seed(config.seed + 1))
-        retain_loader = DataLoader(retain_embeddings, batch_size=config.batch_size, sampler=retain_sampler)
+        retain_loader = DataLoader(retain_embeddings, batch_size=batch_size, sampler=retain_sampler)
     return forget_loader, retain_loader
 
 

@@ -120,6 +120,7 @@ def run_demo(config: RunConfig, split: ExperimentSplit | None = None) -> Unlearn
         print(f"[4/6] Applying UCE closed-form edit ({config.edit_scope} cross-attention key/value projections)", flush=True)
     else:
         print(f"[4/6] Training {config.method.upper()} ({config.training_steps} optimizer steps, micro-batch {config.batch_size}, accumulation {config.gradient_accumulation_steps}, effective batch {config.batch_size * config.gradient_accumulation_steps}, ISM every {config.evaluation_every or 'disabled'} steps)", flush=True)
+    if isinstance(config, SISSConfig): print(f"      SISS normalization batch {config.gradient_batch_size}, {config.batch_size * config.gradient_accumulation_steps // config.gradient_batch_size} gradient groups per update, gradient checkpointing {config.gradient_checkpointing}", flush=True)
     if siss_inputs is not None: checkpoint_path = unlearn_identity(model, split, conditions, config, siss_inputs=siss_inputs)
     elif wid_inputs is None: checkpoint_path = unlearn_identity(model, split, conditions, config)
     else: checkpoint_path = unlearn_identity(model, split, conditions, config, wid_inputs)

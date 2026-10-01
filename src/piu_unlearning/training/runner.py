@@ -42,23 +42,26 @@ def train_model(model: UNet2DConditionModel, compute_loss: Callable, forget_load
     ism_history_path.write_text("", encoding="utf-8")
     forget_batches = batches_forever(forget_loader)
     retain_batches = batches_forever(retain_loader) if retain_loader is not None else None
+    accumulation_steps = config.gradient_accumulation_steps
+    if config.method == "siss": accumulation_steps = config.batch_size * accumulation_steps // config.gradient_batch_size
+    unit = "gradient batch" if config.method == "siss" else "microbatch"
     title = f"Training {config.method.upper()}"
-    with tqdm(total=config.training_steps * config.gradient_accumulation_steps, desc=title, unit="microbatch", dynamic_ncols=True) as progress:
+    with tqdm(total=config.training_steps * accumulation_steps, desc=title, unit=unit, dynamic_ncols=True) as progress:
         for step in range(1, config.training_steps + 1):
             optimizer.zero_grad(set_to_none=True)
             totals = defaultdict(float)
-            for micro_step in range(1, config.gradient_accumulation_steps + 1):
+            for micro_step in range(1, accumulation_steps + 1):
                 result: LossOutput = compute_loss(next(forget_batches), next(retain_batches) if retain_batches is not None else None)
                 if result.gradients is None:
-                    (result.loss / config.gradient_accumulation_steps).backward()
+                    (result.loss / accumulation_steps).backward()
                 else:
                     for parameter, gradient in zip(parameters, result.gradients, strict=True):
-                        gradient.div_(config.gradient_accumulation_steps)
+                        gradient.div_(accumulation_steps)
                         if parameter.grad is None: parameter.grad = gradient
                         else: parameter.grad.add_(gradient)
                 metrics = {"loss": result.loss, **result.metrics}
-                for name, value in metrics.items(): totals[name] += value.detach().item() / config.gradient_accumulation_steps
-                progress.set_postfix(step=f"{step}/{config.training_steps}", micro=f"{micro_step}/{config.gradient_accumulation_steps}", **{name: f"{value.item():.4f}" for name, value in metrics.items()})
+                for name, value in metrics.items(): totals[name] += value.detach().item() / accumulation_steps
+                progress.set_postfix(step=f"{step}/{config.training_steps}", batch=f"{micro_step}/{accumulation_steps}", **{name: f"{value.item():.4f}" for name, value in metrics.items()})
                 progress.update()
             if config.max_grad_norm is not None: torch.nn.utils.clip_grad_norm_(model.parameters(), config.max_grad_norm, error_if_nonfinite=True)
             optimizer.step()

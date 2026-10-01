@@ -54,24 +54,41 @@ def combine_gradients(retain, forget, beta):
 class SISS:
     """PIU's SISS adaptation: g_retain - beta * ||g_retain|| / ||g_forget|| * g_forget."""
 
-    def __init__(self, beta: float):
+    def __init__(self, beta: float, batch_size: int):
         self.beta = beta
+        self.batch_size = batch_size
+
+    @torch.no_grad()
+    def encode_batch(self, batch: dict, context: SISSContext):
+        latents, conditioning = [], []
+        for start in range(0, len(batch["pixel_values"]), self.batch_size):
+            part = slice(start, start + self.batch_size)
+            latents.append(context.vae.encode(batch["pixel_values"][part].to(context.device)).latent_dist.sample() * context.vae.config.scaling_factor)
+            conditioning.append(context.conditioner.encode(batch["face_embs"][part].to(context.device)))
+        return torch.cat(latents), torch.cat(conditioning)
+
+    def branch_gradients(self, clean, conditioning, noise, timesteps, parameters, context):
+        gradients, total_loss = None, clean.new_zeros(())
+        for start in range(0, len(clean), self.batch_size):
+            part = slice(start, start + self.batch_size)
+            loss = diffusion_loss(context.model, context.scheduler, clean[part], conditioning[part], noise[part], timesteps[part]) * (len(clean[part]) / len(clean))
+            current = torch.autograd.grad(loss, parameters)
+            if gradients is None: gradients = current
+            else:
+                for accumulated, gradient in zip(gradients, current, strict=True): accumulated.add_(gradient)
+            total_loss += loss.detach()
+            del current, loss
+        return total_loss, gradients
 
     def compute_loss(self, forget_batch: dict, retain_batch: dict, context: SISSContext) -> LossOutput:
-        model, vae, scheduler = context.model, context.vae, context.scheduler
-        parameters = tuple(parameter for parameter in model.parameters() if parameter.requires_grad)
-        with torch.no_grad():
-            retain_clean = vae.encode(retain_batch["pixel_values"].to(context.device)).latent_dist.sample() * vae.config.scaling_factor
-            forget_clean = vae.encode(forget_batch["pixel_values"].to(context.device)).latent_dist.sample() * vae.config.scaling_factor
-            retain_conditioning = context.conditioner.encode(retain_batch["face_embs"].to(context.device))
-            forget_conditioning = context.conditioner.encode(forget_batch["face_embs"].to(context.device))
+        """Normalize once per logical batch, after accumulating raw microbatch gradients."""
+        parameters = tuple(parameter for parameter in context.model.parameters() if parameter.requires_grad)
+        retain_clean, retain_conditioning = self.encode_batch(retain_batch, context)
+        forget_clean, forget_conditioning = self.encode_batch(forget_batch, context)
         if retain_clean.shape != forget_clean.shape: raise ValueError("SISS requires matched retain/forget latent shapes")
         noise = torch.randn_like(retain_clean)
-        timesteps = torch.randint(scheduler.config.num_train_timesteps, (len(noise),), device=context.device)
-        retain_loss = diffusion_loss(model, scheduler, retain_clean, retain_conditioning, noise, timesteps)
-        retain_gradients = torch.autograd.grad(retain_loss, parameters)
-        forget_loss = diffusion_loss(model, scheduler, forget_clean, forget_conditioning, noise, timesteps)
-        forget_gradients = torch.autograd.grad(forget_loss, parameters)
+        timesteps = torch.randint(context.scheduler.config.num_train_timesteps, (len(noise),), device=context.device)
+        retain_loss, retain_gradients = self.branch_gradients(retain_clean, retain_conditioning, noise, timesteps, parameters, context)
+        forget_loss, forget_gradients = self.branch_gradients(forget_clean, forget_conditioning, noise, timesteps, parameters, context)
         gradients, scale, retain_norm, forget_norm = combine_gradients(retain_gradients, forget_gradients, self.beta)
-        retain_loss, forget_loss = retain_loss.detach(), forget_loss.detach()
         return LossOutput(retain_loss - scale * forget_loss, {"forget_loss": forget_loss, "retain_loss": retain_loss, "scaling_factor": scale, "retain_grad_norm": retain_norm, "forget_grad_norm": forget_norm}, gradients)

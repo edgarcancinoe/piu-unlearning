@@ -59,6 +59,7 @@ def load_arc2face(config: RunConfig) -> StableDiffusionPipeline:
     if config.method == "uce": pipeline.unet.requires_grad_(False)
     else: select_trainable_layers(pipeline.unet, config.surgical_layers, config.train_mode)
 
+    if config.method == "siss" and config.gradient_checkpointing: pipeline.unet.enable_gradient_checkpointing()
     return pipeline.to(config.device)
 
 

@@ -24,7 +24,7 @@ python baselines/run_all.py --identity-id 512 --data-dir data/celebahq_512 \
   --use-anchor-overrides --output-dir outputs/comparison_smoke \
   --num-samples 2 \
   --piu-args='--training-steps 2 --batch-size 1 --gradient-accumulation-steps 1 --evaluation-every 0' \
-  --siss-args='--training-steps 2 --batch-size 1 --gradient-accumulation-steps 1 --evaluation-every 0'
+  --siss-args='--training-steps 2 --batch-size 1 --gradient-batch-size 1 --gradient-accumulation-steps 1 --evaluation-every 0'
 ```
 
 Use the `--METHOD-args='...'` form, including `=`, when the value starts with `--`. These overrides cannot change shared data, seeds, evaluation settings, or output paths. See the [SISS](../docs/baselines/SISS.md), [UCE](../docs/baselines/UCE.md), and [WID](../docs/baselines/WID.md) notes for details and limitations.

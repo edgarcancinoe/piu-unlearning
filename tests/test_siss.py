@@ -60,7 +60,7 @@ class SISSTests(unittest.TestCase):
 
     def test_real_image_loss_matches_independent_gradients(self):
         from diffusers import DDPMScheduler
-        config = SISSConfig(identity_id=0, device="cpu", batch_size=2, training_steps=1)
+        config = SISSConfig(identity_id=0, device="cpu", batch_size=2, gradient_batch_size=2, training_steps=1)
         forget_loader, retain_loader = create_training_loaders(samples(), samples(3), config)
         forget, retain = next(iter(forget_loader)), next(iter(retain_loader))
         context = SISSContext(TinyUNet(), TinyVAE(), DDPMScheduler(num_train_timesteps=10), TinyConditioner(), torch.device('cpu'))
@@ -114,7 +114,7 @@ class SISSTests(unittest.TestCase):
     def test_training_dispatch_checkpoint_and_evaluation(self):
         from diffusers import DDPMScheduler
         with tempfile.TemporaryDirectory() as directory:
-            config = SISSConfig(identity_id=0, device='cpu', output_dir=Path(directory), num_samples=2, training_steps=2, batch_size=2, gradient_accumulation_steps=2, evaluation_every=1)
+            config = SISSConfig(identity_id=0, device='cpu', output_dir=Path(directory), num_samples=2, training_steps=2, batch_size=2, gradient_batch_size=2, gradient_accumulation_steps=2, evaluation_every=1)
             split = make_split(config)
             model = SimpleNamespace(unet=TinyUNet(), vae=TinyVAE(), scheduler=DDPMScheduler(num_train_timesteps=10), tokenizer=None, text_encoder=None)
             initial = model.unet.weight.detach().clone()
@@ -179,7 +179,7 @@ class SISSTests(unittest.TestCase):
         from test_wid import make_image_fixture
         with tempfile.TemporaryDirectory() as directory:
             wid, split, _ = make_image_fixture(Path(directory))
-            config = SISSConfig(identity_id=0, data_dir=wid.data_dir, batch_size=2, training_steps=1)
+            config = SISSConfig(identity_id=0, data_dir=wid.data_dir, batch_size=2, gradient_batch_size=2, training_steps=1)
             inputs = prepare_siss_inputs(split, config)
             forget, retain = create_training_loaders(inputs.forget, inputs.retain, config)
             self.assertEqual(next(iter(forget))['pixel_values'].shape, (2, 3, 512, 512))

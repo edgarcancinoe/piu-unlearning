@@ -8,5 +8,5 @@ from piu_unlearning.methods.wid import WID
 def build_method(config: PIUConfig | SISSConfig | UCEConfig | WIDConfig) -> PIU | SISS | UCE | WID:
     if config.method == "uce": return UCE()
     if config.method == "wid": return WID(config.model_loss_weight, config.identity_loss_weight, config.preservation_weight)
-    if config.method == "siss": return SISS(config.beta)
+    if config.method == "siss": return SISS(config.beta, config.batch_size)
     return PIU(config.preservation_weight, config.negative_guidance_scale)
