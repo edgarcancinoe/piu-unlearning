@@ -39,7 +39,7 @@ Canonical preparation currently downloads embeddings, labels, and centroids, but
 
 Add an explicit row-aligned manifest plus an image root. Select images using `split.forget_train.indices`; never infer alignment from a sorted directory listing or just matching row counts. Obtain the canonical mapping from the original `image_paths.txt`/export metadata and validate it against the published artifact ordering. The legacy dataset upload script iterates over aligned paths and labels, but that alone does not establish equivalence between every dataset/artifact revision.
 
-Make image preparation opt-in. PIU, ESD, and UCE must continue to work with embeddings alone. Missing mappings or files should fail before model loading, without silently dropping rows or recomputing identity labels.
+Make image preparation opt-in. PIU and UCE work with embeddings alone; SISS and WID require verified real images. Missing mappings or files should fail before model loading, without silently dropping rows or recomputing identity labels.
 
 ### Recognition-space compatibility
 
@@ -71,7 +71,7 @@ The current final-run grid script selects learning rate `5e-6`, identity weight 
 | Timesteps | Full scheduler range | Active branch ignores split-gating flags |
 | Reference | Proximity anchor, threshold `0.2` | Preset |
 
-Treat settings inferred from the current preset as provisional until checked against archived run configs. The old distributed batch size is global, not per GPU; preserve effective-batch semantics rather than copying per-rank values. Keep common generation/evaluation settings when comparing against PIU/ESD/UCE, and record that this is distinct from replaying every legacy evaluation setting.
+Treat settings inferred from the current preset as provisional until checked against archived run configs. The old distributed batch size is global, not per GPU; preserve effective-batch semantics rather than copying per-rank values. Keep common generation/evaluation settings when comparing against PIU/SISS/UCE, and record that this is distinct from replaying every legacy evaluation setting.
 
 ## Small module boundaries
 
@@ -86,7 +86,7 @@ Treat settings inferred from the current preset as provisional until checked aga
 | `visualization.py` | Reuse chart helpers, adding model/identity loss series when present. Keep existing methods' plots unchanged. |
 | `baselines/run_all.py` | Register WID only after integration passes; preserve the existing shared split, baseline images, conditions, and subprocess isolation. |
 
-Return `LossOutput` with `model_loss`, `identity_loss`, weighted model/identity terms, `forget_loss`, and `preserve_loss`. The runner already logs arbitrary metric names. `forget_loss` remains the combined weighted forget objective for existing charts; retain loss defaults to zero. Store method-specific settings in the existing checkpoint config rather than giving WID a fake negative-guidance parameter; preserve existing PIU/ESD checkpoint compatibility.
+Return `LossOutput` with `model_loss`, `identity_loss`, weighted model/identity terms, `forget_loss`, and `preserve_loss`. The runner already logs arbitrary metric names. `forget_loss` remains the combined weighted forget objective for existing charts; retain loss defaults to zero. Store method-specific settings in the existing checkpoint config rather than giving WID a fake negative-guidance parameter; preserve existing PIU checkpoint compatibility and keep SISS gradient metadata separate.
 
 Do not create another trainer, evaluation pipeline, registry framework, or generic dependency container. Keep WID dependencies in its context, not as nullable fields added to every method. Validate artifacts at setup boundaries rather than wrapping each tensor operation. Freeze modules explicitly; test gradient flow instead of surrounding every operation with defensive checks.
 

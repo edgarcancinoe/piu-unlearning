@@ -89,6 +89,6 @@ python baselines/run_all.py --identity-id 512 --data-dir data/celebahq_512 \
   --wid-args='--identity-checkpoint /path/to/backbone_ir_se_50.pth'
 ```
 
-Use `--methods piu esd uce` if real images or recognition weights are unavailable. Use the same target mode/checkpoint/preprocessing when comparing WID experiments. Shared evaluation settings and deterministic splits do not by themselves reproduce archived experiments.
+Use `--methods piu siss uce` when verified images are available but recognition weights are unavailable; use `--methods piu uce` without real images. Use the same target mode/checkpoint/preprocessing when comparing WID experiments. Shared evaluation settings and deterministic splits do not by themselves reproduce archived experiments.
 
 CPU tests cover image pairing/integrity, reconstruction, identity-only gradients, frozen modules, the real IR-SE50 architecture with synthetic weights, checkpointing, plots, and mocked demo/launcher execution. The loss and gradients match the old implementation under fixed test inputs and an identical target. Full Arc2Face/CUDA training and pretrained recognition quality remain unvalidated.

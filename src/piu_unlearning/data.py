@@ -12,7 +12,7 @@ from PIL import Image
 from torch.utils.data import DataLoader, Dataset, RandomSampler
 
 if TYPE_CHECKING:
-    from piu_unlearning.config import ESDConfig, PIUConfig, RunConfig, TrainingConfig
+    from piu_unlearning.config import PIUConfig, RunConfig, TrainingConfig
 
 
 @dataclass(frozen=True)
@@ -159,7 +159,7 @@ def write_split_manifest(split: ExperimentSplit, path: Path) -> None:
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
-def create_embedding_loaders(split: ExperimentSplit, config: PIUConfig | ESDConfig) -> tuple[DataLoader[torch.Tensor], DataLoader[torch.Tensor] | None]:
+def create_embedding_loaders(split: ExperimentSplit, config: PIUConfig) -> tuple[DataLoader[torch.Tensor], DataLoader[torch.Tensor] | None]:
     forget_embeddings = split.forget_train.embeddings
     if config.forget_sampling == "dirichlet":
         forget_dataset = DirichletEmbeddingDataset(forget_embeddings)
@@ -170,12 +170,12 @@ def create_embedding_loaders(split: ExperimentSplit, config: PIUConfig | ESDConf
     return create_training_loaders(forget_dataset, split.retain_train.embeddings, config)
 
 
-def create_training_loaders(forget_dataset: Dataset | torch.Tensor, retain_embeddings: torch.Tensor, config: TrainingConfig) -> tuple[DataLoader, DataLoader | None]:
+def create_training_loaders(forget_dataset: Dataset | torch.Tensor, retain_embeddings: Dataset | torch.Tensor, config: TrainingConfig) -> tuple[DataLoader, DataLoader | None]:
     num_samples = config.training_steps * config.gradient_accumulation_steps * config.batch_size
     forget_sampler = RandomSampler(forget_dataset, replacement=True, num_samples=num_samples, generator=torch.Generator().manual_seed(config.seed))
     forget_loader = DataLoader(forget_dataset, batch_size=config.batch_size, sampler=forget_sampler)
     retain_loader = None
-    if config.preservation_weight > 0:
+    if config.method == "siss" or config.preservation_weight > 0:
         if not len(retain_embeddings): raise ValueError("Preservation requires nonempty retain training data")
         retain_sampler = RandomSampler(retain_embeddings, replacement=True, num_samples=num_samples, generator=torch.Generator().manual_seed(config.seed + 1))
         retain_loader = DataLoader(retain_embeddings, batch_size=config.batch_size, sampler=retain_sampler)

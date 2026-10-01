@@ -15,7 +15,7 @@ import torch.nn.functional as F
 from torch import nn
 from torch.utils.data import DataLoader
 
-from piu_unlearning.config import ESDConfig, PIUConfig, parse_config
+from piu_unlearning.config import PIUConfig, parse_config
 from piu_unlearning.data import create_embedding_loaders, create_evaluation_conditions, create_experiment_split
 from piu_unlearning.methods import build_method
 from piu_unlearning.models.arc2face import select_trainable_layers
@@ -76,41 +76,14 @@ class ConfigurationTests(unittest.TestCase):
         self.assertEqual(config.output_dir, Path("outputs/demo"))
         self.assertIsNotNone(config.anchor_overrides)
 
-    def test_esd_defaults_and_overrides(self):
-        config = parse_config(["--method", "esd", "--identity-id", "512"])
-        self.assertIsInstance(config, ESDConfig)
-        self.assertEqual((config.train_mode, config.preservation_weight, config.reference_mode), ("x", 0, "zero_uncond"))
-        self.assertEqual(config.output_dir, Path("outputs/esd_demo"))
-        self.assertEqual((config.batch_size, config.gradient_accumulation_steps, config.training_steps), (1, 1, 1000))
-        self.assertEqual((config.optimizer, config.learning_rate, config.weight_decay, config.negative_guidance_scale), ("adam", 1e-5, 0, 1))
-        self.assertEqual(config, ESDConfig(identity_id=512))
-        config = parse_config(["--identity-id", "512", "--method", "esd", "--reference-mode", "gaussian_uncond", "--train-mode", "full", "--preservation-weight", "2"])
-        self.assertEqual((config.reference_mode, config.train_mode, config.preservation_weight), ("gaussian_uncond", "full", 2))
-        self.assertEqual(asdict(config)["method"], "esd")
-        config = parse_config(["--method", "esd", "--identity-id", "512", "--optimizer", "adamw", "--learning-rate", "2e-5", "--training-steps", "12", "--batch-size", "2", "--gradient-accumulation-steps", "3", "--weight-decay", "0.02"])
-        self.assertEqual((config.optimizer, config.learning_rate, config.weight_decay), ("adamw", 2e-5, 0.02))
-        self.assertEqual((config.batch_size, config.gradient_accumulation_steps, config.training_steps), (2, 3, 12))
 
     def test_invalid_options_fail_before_training(self):
-        for arguments in (["--method", "esd", "--use-anchor-overrides"], ["--training-steps", "0"], ["--gradient-accumulation-steps", "0"], ["--evaluation-every", "-1"], ["--preservation-weight", "-1"]):
+        for arguments in (["--method", "siss", "--use-anchor-overrides"], ["--training-steps", "0"], ["--gradient-accumulation-steps", "0"], ["--evaluation-every", "-1"], ["--preservation-weight", "-1"]):
             with self.subTest(arguments=arguments), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
                 parse_config(["--identity-id", "512", *arguments])
 
 
 class MethodTests(unittest.TestCase):
-    def test_esd_references_do_not_select_a_retain_anchor(self):
-        config = ESDConfig(identity_id=0, device="cpu")
-        split = make_split(config)
-        with patch("piu_unlearning.methods.reference.select_anchor_embedding", side_effect=AssertionError("ESD must not select an anchor")):
-            reference = build_method(config).prepare_reference(split, config)
-        self.assertTrue(torch.equal(reference.embedding, torch.zeros(1, 3)))
-        self.assertIsNone(reference.identity_id)
-        config = replace(config, reference_mode="gaussian_uncond")
-        before = torch.random.get_rng_state()
-        reference = build_method(config).prepare_reference(split, config)
-        self.assertTrue(torch.equal(before, torch.random.get_rng_state()))
-        expected = F.normalize(torch.randn((1, 3), generator=torch.Generator().manual_seed(config.seed)), dim=-1, eps=1e-8)
-        torch.testing.assert_close(reference.embedding, expected, rtol=0, atol=0)
 
     def test_piu_uses_selected_anchor(self):
         config = PIUConfig(identity_id=0, device="cpu")
@@ -166,7 +139,7 @@ class TrainingTests(unittest.TestCase):
     def test_optimizer_selection_matches_torch(self):
         for name, optimizer_type in (("adam", torch.optim.Adam), ("adamw", torch.optim.AdamW)):
             with self.subTest(optimizer=name), tempfile.TemporaryDirectory() as directory:
-                config = ESDConfig(identity_id=0, output_dir=Path(directory), optimizer=name, learning_rate=0.01, weight_decay=0.2, training_steps=2, evaluation_every=0)
+                config = PIUConfig(identity_id=0, output_dir=Path(directory), optimizer=name, learning_rate=0.01, weight_decay=0.2, training_steps=2, evaluation_every=0)
                 model = nn.Linear(1, 1, bias=False)
                 with torch.no_grad(): model.weight.fill_(1)
                 reference = copy.deepcopy(model)
@@ -186,27 +159,9 @@ class TrainingTests(unittest.TestCase):
                 checkpoint = torch.load(checkpoint_path, weights_only=True)
                 self.assertEqual(checkpoint["config"]["optimizer"], name)
 
-    def test_esd_demo_training_path_saves_reference(self):
-        from diffusers import DDPMScheduler
-        from piu_unlearning.main import unlearn_identity
-
-        for mode in ("zero_uncond", "gaussian_uncond"):
-            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as directory:
-                config = ESDConfig(identity_id=0, device="cpu", output_dir=Path(directory), training_steps=1, batch_size=2, num_samples=2, evaluation_every=0, reference_mode=mode)
-                split = make_split(config)
-                model = SimpleNamespace(unet=TinyUNet(), scheduler=DDPMScheduler(num_train_timesteps=10), tokenizer=None, text_encoder=None)
-                with patch("piu_unlearning.main.Arc2FaceIdentityConditioner", return_value=TinyConditioner()):
-                    checkpoint = unlearn_identity(model, split, create_evaluation_conditions(split, config), config)
-                self.assertTrue(checkpoint.is_file())
-                metadata = json.loads((config.output_dir / "reference.json").read_text())
-                self.assertEqual(metadata["mode"], mode)
-                self.assertIsNone(metadata["identity_id"])
-                embedding = torch.load(config.output_dir / "reference_embedding.pt", weights_only=True)
-                expected = build_method(config).prepare_reference(split, config).embedding
-                torch.testing.assert_close(embedding, expected, rtol=0, atol=0)
 
     def test_sampling_modes_and_optional_retain_loader(self):
-        config = ESDConfig(identity_id=0, device="cpu", batch_size=2)
+        config = PIUConfig(identity_id=0, device="cpu", batch_size=2, preservation_weight=0)
         split = make_split(config)
         for mode in ("dirichlet", "centroid", "individual"):
             forget_loader, retain_loader = create_embedding_loaders(split, replace(config, forget_sampling=mode))
@@ -221,8 +176,8 @@ class TrainingTests(unittest.TestCase):
         _, retain_loader = create_embedding_loaders(split, replace(config, preservation_weight=1))
         self.assertIsNotNone(retain_loader)
 
-    def test_runner_checkpoints_and_evaluation_for_both_methods(self):
-        for config_type in (PIUConfig, ESDConfig):
+    def test_runner_checkpoints_and_evaluation_for_piu(self):
+        for config_type in (PIUConfig,):
             with self.subTest(method=config_type.__name__), tempfile.TemporaryDirectory() as directory:
                 config = config_type(identity_id=0, device="cpu", output_dir=Path(directory), training_steps=2, gradient_accumulation_steps=2, batch_size=2, evaluation_every=1)
                 context = make_context()
@@ -247,11 +202,10 @@ class TrainingTests(unittest.TestCase):
                 loss_history = [json.loads(line) for line in (checkpoint_path.parent / "loss_history.jsonl").read_text().splitlines()]
                 self.assertEqual([row["step"] for row in loss_history], [1, 2])
                 self.assertTrue(all({"loss", "forget_loss", "preserve_loss"} <= row.keys() for row in loss_history))
-                if config.method == "esd": self.assertTrue(all(row["preserve_loss"] == 0 for row in loss_history))
 
     def test_gradient_accumulation_matches_full_batch(self):
         with tempfile.TemporaryDirectory() as directory:
-            config = ESDConfig(identity_id=0, output_dir=Path(directory), training_steps=1, gradient_accumulation_steps=2, evaluation_every=0)
+            config = PIUConfig(identity_id=0, output_dir=Path(directory), training_steps=1, gradient_accumulation_steps=2, evaluation_every=0)
             model = nn.Linear(1, 1, bias=False)
             reference = copy.deepcopy(model)
             samples = torch.tensor([[1.0], [3.0]])
@@ -261,7 +215,7 @@ class TrainingTests(unittest.TestCase):
                 return LossOutput(value, {"forget_loss": value, "preserve_loss": value.new_zeros(())})
 
             train_model(model, loss, DataLoader(samples, batch_size=1), None, config)
-            optimizer = torch.optim.Adam(reference.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay)
+            optimizer = torch.optim.AdamW(reference.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay)
             reference(samples).square().mean().backward()
             optimizer.step()
             torch.testing.assert_close(model.weight, reference.weight, rtol=0, atol=0)

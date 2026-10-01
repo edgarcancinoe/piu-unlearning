@@ -95,29 +95,27 @@ class PIUConfig(TrainingConfig):
 
 
 @dataclass(frozen=True)
-class ESDConfig(TrainingConfig):
-    """ESD-x learning defaults from Gandikota et al. (ICCV 2023), Section 5 and Appendix B.1."""
+class SISSConfig(TrainingConfig):
+    """Arc2Face SISS defaults from PIU Appendix C.1."""
 
-    method: str = field(default="esd", init=False)
-    forget_sampling: str = "dirichlet"
-    output_dir: Path = Path("outputs/esd_demo")
-    train_mode: str = "x"
-    batch_size: int = 1
-    gradient_accumulation_steps: int = 1
-    training_steps: int = 1000
-    learning_rate: float = 1e-5
-    optimizer: str = "adam"
+    method: str = field(default="siss", init=False)
+    output_dir: Path = Path("outputs/siss_demo")
+    train_mode: str = "full"
+    batch_size: int = 16
+    gradient_accumulation_steps: int = 4
+    training_steps: int = 60
+    learning_rate: float = 5e-6
     weight_decay: float = 0.0
-    preservation_weight: float = 0.0
-    negative_guidance_scale: float = 1.0
-    reference_mode: str = "zero_uncond"
+    max_grad_norm: float | None = 1.0
+    beta: float = 0.1
+    use_ema: bool = True
+    image_manifest: Path | None = None
+    image_root: Path | None = None
 
     def __post_init__(self) -> None:
         super().__post_init__()
-        if self.preservation_weight < 0: raise ValueError("preservation_weight must be nonnegative")
-        if self.forget_sampling not in ("dirichlet", "individual", "centroid"): raise ValueError(f"Unknown forget_sampling: {self.forget_sampling}")
-        if self.reference_mode not in ("zero_uncond", "gaussian_uncond"): raise ValueError(f"Unknown ESD reference_mode: {self.reference_mode}")
-        if self.anchor_overrides is not None: raise ValueError("ESD synthetic references do not use anchor overrides")
+        if not 0 <= self.beta < float("inf"): raise ValueError("SISS beta must be finite and nonnegative")
+        if self.anchor_overrides is not None: raise ValueError("SISS does not use anchors")
 
 
 @dataclass(frozen=True)
@@ -173,11 +171,11 @@ class WIDConfig(TrainingConfig):
         if self.identity_target not in ("anchor_images", "stored_arcface"): raise ValueError("Unknown identity_target")
 
 
-def parse_config(argv: list[str] | None = None) -> PIUConfig | ESDConfig | UCEConfig | WIDConfig:
+def parse_config(argv: list[str] | None = None) -> PIUConfig | SISSConfig | UCEConfig | WIDConfig:
     method_parser = argparse.ArgumentParser(add_help=False)
-    method_parser.add_argument("--method", choices=("piu", "esd", "uce", "wid"), default="piu")
+    method_parser.add_argument("--method", choices=("piu", "siss", "uce", "wid"), default="piu")
     method_args, _ = method_parser.parse_known_args(argv)
-    config_type = {"piu": PIUConfig, "esd": ESDConfig, "uce": UCEConfig, "wid": WIDConfig}[method_args.method]
+    config_type = {"piu": PIUConfig, "siss": SISSConfig, "uce": UCEConfig, "wid": WIDConfig}[method_args.method]
     parser = argparse.ArgumentParser(description="Run a before-and-after identity-unlearning demo.", parents=[method_parser])
     parser.add_argument("--identity-id", type=int, required=True)
     parser.add_argument("--data-dir", type=Path, default=config_type.data_dir)
@@ -202,22 +200,24 @@ def parse_config(argv: list[str] | None = None) -> PIUConfig | ESDConfig | UCECo
         parser.add_argument("--normalize-branch-weights", action=argparse.BooleanOptionalAction, default=UCEConfig.normalize_branch_weights)
     else:
         parser.add_argument("--train-mode", choices=("surgical", "x", "full"), default=config_type.train_mode, help="Surgical cross-attention, all cross-attention (x), or the full U-Net.")
-        if method_args.method != "wid": parser.add_argument("--forget-sampling", choices=("dirichlet", "individual", "centroid"), default=config_type.forget_sampling)
+        if method_args.method == "piu": parser.add_argument("--forget-sampling", choices=("dirichlet", "individual", "centroid"), default=config_type.forget_sampling)
         parser.add_argument("--batch-size", type=int, default=config_type.batch_size)
         parser.add_argument("--gradient-accumulation-steps", type=int, default=config_type.gradient_accumulation_steps)
         parser.add_argument("--training-steps", type=int, default=config_type.training_steps)
         parser.add_argument("--learning-rate", type=float, default=config_type.learning_rate)
         parser.add_argument("--optimizer", choices=("adam", "adamw"), default=config_type.optimizer)
         parser.add_argument("--weight-decay", type=float, default=config_type.weight_decay)
-        parser.add_argument("--preservation-weight", type=float, default=config_type.preservation_weight)
-        if method_args.method != "wid": parser.add_argument("--negative-guidance-scale", type=float, default=config_type.negative_guidance_scale)
+        if method_args.method != "siss": parser.add_argument("--preservation-weight", type=float, default=config_type.preservation_weight)
+        if method_args.method == "piu": parser.add_argument("--negative-guidance-scale", type=float, default=config_type.negative_guidance_scale)
         parser.add_argument("--max-grad-norm", type=float, default=config_type.max_grad_norm)
         parser.add_argument("--log-every", type=int, default=config_type.log_every)
         parser.add_argument("--evaluation-every", type=int, default=config_type.evaluation_every, help="Run ISM evaluation every N optimizer steps; 0 disables it.")
-    if method_args.method == "esd": parser.add_argument("--reference-mode", choices=("zero_uncond", "gaussian_uncond"), default=ESDConfig.reference_mode)
-    if method_args.method == "wid":
+    if method_args.method == "siss": parser.add_argument("--beta", type=float, default=SISSConfig.beta, help="Forget gradient norm relative to retain gradient norm.")
+    if method_args.method == "siss": parser.add_argument("--use-ema", action=argparse.BooleanOptionalAction, default=SISSConfig.use_ema)
+    if method_args.method in ("siss", "wid"):
         parser.add_argument("--image-manifest", type=Path, help="Row-aligned manifest produced by piu-prepare-images.")
         parser.add_argument("--image-root", type=Path, help="Override the image root recorded in the manifest.")
+    if method_args.method == "wid":
         parser.add_argument("--identity-checkpoint", type=Path, help="Trusted IR-SE50 state-dict checkpoint; required when identity loss is enabled.")
         parser.add_argument("--identity-channel-order", choices=("rgb", "bgr"), default=WIDConfig.identity_channel_order)
         parser.add_argument("--identity-target", choices=("anchor_images", "stored_arcface"), default=WIDConfig.identity_target)
@@ -235,7 +235,7 @@ def parse_config(argv: list[str] | None = None) -> PIUConfig | ESDConfig | UCECo
     values = vars(parser.parse_args(argv))
     values.pop("method")
     use_anchor_overrides = values.pop("use_anchor_overrides")
-    if method_args.method == "esd" and use_anchor_overrides: parser.error("--use-anchor-overrides is only supported for PIU, UCE, and WID")
+    if method_args.method == "siss" and use_anchor_overrides: parser.error("--use-anchor-overrides is only supported for PIU, UCE, and WID")
     values["anchor_overrides"] = CELEBAHQ_512_ANCHOR_OVERRIDES if use_anchor_overrides else None
     values["surgical_layers"] = tuple(values["surgical_layers"])
     try:

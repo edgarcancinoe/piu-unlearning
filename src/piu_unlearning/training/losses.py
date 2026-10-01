@@ -16,6 +16,7 @@ if TYPE_CHECKING:
 class LossOutput:
     loss: torch.Tensor
     metrics: dict[str, torch.Tensor]
+    gradients: tuple[torch.Tensor, ...] | None = None
 
 
 @dataclass(frozen=True)
@@ -37,7 +38,7 @@ def sample_noisy_latents(batch_size: int, model: UNet2DConditionModel, scheduler
 
 
 class GuidedNoiseLoss:
-    """Teacher-guided erasure with optional retain distillation, shared by PIU and ESD."""
+    """Teacher-guided erasure with optional retain distillation, used by PIU."""
 
     def __init__(self, preservation_weight: float, negative_guidance_scale: float) -> None:
         self.preservation_weight = preservation_weight

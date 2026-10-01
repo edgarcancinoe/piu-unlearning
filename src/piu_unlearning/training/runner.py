@@ -29,7 +29,13 @@ def train_model(model: UNet2DConditionModel, compute_loss: Callable, forget_load
     output_dir = config.output_dir / "checkpoints"
     output_dir.mkdir(parents=True, exist_ok=True)
     optimizer_type = {"adam": torch.optim.Adam, "adamw": torch.optim.AdamW}[config.optimizer]
-    optimizer = optimizer_type((parameter for parameter in model.parameters() if parameter.requires_grad), lr=config.learning_rate, weight_decay=config.weight_decay)
+    parameters = tuple(parameter for parameter in model.parameters() if parameter.requires_grad)
+    optimizer = optimizer_type(parameters, lr=config.learning_rate, weight_decay=config.weight_decay)
+    ema = None
+    if config.method == "siss" and config.use_ema:
+        from diffusers.training_utils import EMAModel
+
+        ema = EMAModel(parameters)
     loss_history_path = output_dir / "loss_history.jsonl"
     ism_history_path = output_dir / "ism_history.jsonl"
     loss_history_path.write_text("", encoding="utf-8")
@@ -43,18 +49,31 @@ def train_model(model: UNet2DConditionModel, compute_loss: Callable, forget_load
             totals = defaultdict(float)
             for micro_step in range(1, config.gradient_accumulation_steps + 1):
                 result: LossOutput = compute_loss(next(forget_batches), next(retain_batches) if retain_batches is not None else None)
-                (result.loss / config.gradient_accumulation_steps).backward()
+                if result.gradients is None:
+                    (result.loss / config.gradient_accumulation_steps).backward()
+                else:
+                    for parameter, gradient in zip(parameters, result.gradients, strict=True):
+                        gradient.div_(config.gradient_accumulation_steps)
+                        if parameter.grad is None: parameter.grad = gradient
+                        else: parameter.grad.add_(gradient)
                 metrics = {"loss": result.loss, **result.metrics}
                 for name, value in metrics.items(): totals[name] += value.detach().item() / config.gradient_accumulation_steps
                 progress.set_postfix(step=f"{step}/{config.training_steps}", micro=f"{micro_step}/{config.gradient_accumulation_steps}", **{name: f"{value.item():.4f}" for name, value in metrics.items()})
                 progress.update()
             if config.max_grad_norm is not None: torch.nn.utils.clip_grad_norm_(model.parameters(), config.max_grad_norm, error_if_nonfinite=True)
             optimizer.step()
+            if ema is not None: ema.step(parameters)
             with loss_history_path.open("a", encoding="utf-8") as history: history.write(json.dumps({"step": step, **totals}) + "\n")
 
             if evaluate_ism is not None and config.evaluation_every and step % config.evaluation_every == 0:
                 progress.set_description("Evaluating ISM")
-                forget_ism, retain_ism = evaluate_ism(step)
+                if ema is not None:
+                    ema.store(parameters)
+                    ema.copy_to(parameters)
+                try:
+                    forget_ism, retain_ism = evaluate_ism(step)
+                finally:
+                    if ema is not None: ema.restore(parameters)
                 with ism_history_path.open("a", encoding="utf-8") as history: history.write(json.dumps({"step": step, "forget_ism": forget_ism, "retain_ism": retain_ism}) + "\n")
                 progress.write(f"step={step:04d}/{config.training_steps:04d} forget_ism={forget_ism:.6f} retain_ism={retain_ism:.6f}")
                 model.train()
@@ -72,9 +91,12 @@ def train_model(model: UNet2DConditionModel, compute_loss: Callable, forget_load
         "optimizer_state_dict": optimizer.state_dict(),
         "training_steps": config.training_steps,
         "gradient_accumulation_steps": config.gradient_accumulation_steps,
-        "preservation_weight": config.preservation_weight,
         "trainable_parameters": [name for name, parameter in model.named_parameters() if parameter.requires_grad],
     }
-    if config.method in ("piu", "esd"): checkpoint["negative_guidance_scale"] = config.negative_guidance_scale
+    if config.method != "siss": checkpoint["preservation_weight"] = config.preservation_weight
+    if config.method == "piu": checkpoint["negative_guidance_scale"] = config.negative_guidance_scale
+    if config.method == "siss": checkpoint["beta"] = config.beta
+    if ema is not None: checkpoint["ema_state_dict"] = ema.state_dict()
     torch.save(checkpoint, checkpoint_path)
+    if ema is not None: ema.copy_to(parameters)
     return checkpoint_path
