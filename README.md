@@ -46,6 +46,17 @@ The demo prepares missing data from the hosted dataset on first run. To download
 
 Download the exact artifacts used in the paper from [Hugging Face](https://huggingface.co/datasets/edgarcancinoe/celebahq_512_id_clusters).
 
+To download the raw paper files into the Hugging Face cache from a terminal:
+
+```bash
+hf download edgarcancinoe/celebahq_512_id_clusters \
+  paper_artifacts/embeddings.npy paper_artifacts/srk_labels_eps0.35.npy \
+  paper_artifacts/srk_centroids_eps0.35.npy \
+  --repo-type dataset --revision 47ac08e6c0f80da13752b8f2694a515da26f352e
+```
+
+Then prepare the files for the demo. This step also works without the `hf download` command above:
+
 ```bash
 piu-prepare-data --output-dir data/celebahq_512
 piu-demo --identity-id 512 --data-dir data/celebahq_512 --use-anchor-overrides

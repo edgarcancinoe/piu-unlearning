@@ -7,13 +7,7 @@ python baselines/run_all.py --identity-id 512 --data-dir data/celebahq_512 \
   --use-anchor-overrides --output-dir outputs/comparison_512
 ```
 
-WID downloads and caches its pinned IR-SE50 weights automatically. To download them before running:
-
-```bash
-hf download AIRI-Institute/StyleFeatureEditor pretrained_models/model_ir_se50.pth --revision 5a50cb1b78da946be8163b8b255d486996fd2c73
-```
-
-This uses the same Hugging Face cache as WID. Use `--wid-args='--identity-checkpoint /path/to/backbone_ir_se_50.pth'` to supply other local weights.
+WID downloads and caches its pinned IR-SE50 weights automatically. Use `--wid-args='--identity-checkpoint /path/to/backbone_ir_se_50.pth'` to supply local weights.
 
 ## Options
 
