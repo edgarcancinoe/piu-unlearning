@@ -12,6 +12,8 @@ import time
 from dataclasses import asdict
 from pathlib import Path
 
+if __name__ == "__main__": print("Loading baseline dependencies...", flush=True)
+
 import numpy as np
 
 from piu_unlearning.config import RunConfig, parse_config
@@ -73,7 +75,10 @@ def build_jobs(args):
 
 def prepare_split(split_args):
     config = parse_config(split_args)
-    split = create_experiment_split(*load_prepared_data(config), config)
+    print(f"Loading prepared data from {config.data_dir}...", flush=True)
+    data = load_prepared_data(config)
+    print("Preparing training splits and evaluation conditions...", flush=True)
+    split = create_experiment_split(*data, config)
     return split, create_evaluation_conditions(split, config)
 
 
@@ -151,8 +156,11 @@ def launch(args):
         return
     if args.output_dir.exists() and any(args.output_dir.iterdir()): raise ValueError("Output directory is not empty; choose a new --output-dir to avoid mixing runs")
     split, conditions = prepare_split(jobs[0]["split_args"])
-    if any(job["method"] != "siss" for job in jobs): select_anchor_embedding(split, parse_config(jobs[0]["split_args"]))
+    if any(job["method"] != "siss" for job in jobs):
+        print("Checking the shared anchor...", flush=True)
+        select_anchor_embedding(split, parse_config(jobs[0]["split_args"]))
     for job in jobs:
+        print(f"Checking {job['method'].upper()} training inputs...", flush=True)
         if job["method"] == "siss": prepare_siss_inputs(split, parse_config(job["args"]))
         if job["method"] == "wid": prepare_wid_inputs(split, parse_config(job["args"]))
     args.output_dir.mkdir(parents=True, exist_ok=True)
@@ -169,6 +177,7 @@ def launch(args):
         status.append(entry)
         status_path = args.output_dir / "runs.json"
         status_path.write_text(json.dumps(status, indent=2) + "\n", encoding="utf-8")
+        print(f"Starting {job['method'].upper()}; log: {method_dir / 'run.log'}", flush=True)
         start = time.monotonic()
         try:
             run_process([sys.executable, "-u", str(Path(__file__).resolve()), "--worker", str(job_path)], method_dir / "run.log")
