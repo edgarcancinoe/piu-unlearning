@@ -32,6 +32,12 @@ Use the same dataset revision used for extraction if it was overridden. The mani
 
 WID automatically downloads the pretrained **IR-SE50** [checkpoint hosted by AIRI-Institute](https://huggingface.co/AIRI-Institute/StyleFeatureEditor/blob/5a50cb1b78da946be8163b8b255d486996fd2c73/pretrained_models/model_ir_se50.pth) into the Hugging Face cache on first use (about 175 MB). The revision is pinned, and later runs reuse the cached weights. `HF_HOME` controls the cache location; `HF_HUB_OFFLINE=1` works once that cache is populated. The first download requires internet access.
 
+To download it in advance from the terminal:
+
+```bash
+hf download AIRI-Institute/StyleFeatureEditor pretrained_models/model_ir_se50.pth --revision 5a50cb1b78da946be8163b8b255d486996fd2c73
+```
+
 To use your own compatible [InsightFace_Pytorch](https://github.com/TreB1eN/InsightFace_Pytorch) weights, pass `--identity-checkpoint /path/to/backbone_ir_se_50.pth`. Local weights take precedence and skip downloading. The loader accepts a tensor state dict, optionally under `state_dict`, and strips a leading `module.` prefix. It checks the architecture strictly; ONNX files and iresnet100 checkpoints are not interchangeable with IR-SE50. Pretrained weights remain subject to their source's terms.
 
 ```bash
