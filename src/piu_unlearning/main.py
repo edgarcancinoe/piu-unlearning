@@ -76,10 +76,9 @@ def unlearn_identity(model: StableDiffusionPipeline, split: ExperimentSplit, con
     context = NoisePredictionContext(model.unet, frozen_unet, scheduler, identity_conditioner, reference_conditioning, device)
     if wid_inputs is not None:
         encoder = wid_inputs.encoder.to(device) if wid_inputs.encoder is not None else None
-        target = wid_inputs.identity_target.to(device) if wid_inputs.identity_target is not None else None
-        context = WIDContext(context, model.vae.eval().requires_grad_(False), encoder, target)
+        context = WIDContext(context, model.vae.eval().requires_grad_(False), encoder)
         (config.output_dir / "wid_identity.json").write_text(json.dumps(wid_inputs.metadata, indent=2) + "\n", encoding="utf-8")
-        if target is not None: torch.save(target.detach().cpu(), config.output_dir / "identity_target.pt")
+        if wid_inputs.identity_target is not None: torch.save(wid_inputs.identity_target, config.output_dir / "identity_target.pt")
         print(f"WID identity target: {wid_inputs.metadata['target_mode']}; loss: mean MSE", flush=True)
     extractor = ArcFaceExtractor(config.embeddings_path.parent / "face_models", config.evaluation_device) if config.evaluation_every else None
 

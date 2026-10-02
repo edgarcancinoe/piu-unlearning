@@ -4,9 +4,11 @@ Run from the repository root. This compares PIU, SISS, UCE, and WID sequentially
 
 ```bash
 python baselines/run_all.py --identity-id 512 --data-dir data/celebahq_512 \
-  --use-anchor-overrides --output-dir outputs/comparison_512 \
-  --wid-args='--identity-checkpoint /path/to/backbone_ir_se_50.pth'
+  --use-anchor-overrides --output-dir outputs/comparison_512
 ```
+
+WID downloads and caches its pinned IR-SE50 weights automatically. Use
+`--wid-args='--identity-checkpoint /path/to/backbone_ir_se_50.pth'` to supply local weights.
 
 ## Options
 

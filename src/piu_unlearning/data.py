@@ -197,14 +197,17 @@ def load_training_image(path: Path, resolution: int = 512) -> torch.Tensor:
 
 
 class PairedImageDataset(Dataset):
-    def __init__(self, partition: EmbeddingPartition, paths: list[Path]):
+    def __init__(self, partition: EmbeddingPartition, paths: list[Path], identity_targets: torch.Tensor | None = None):
         self.embeddings = partition.embeddings
         self.paths = [paths[index] for index in partition.indices.tolist()]
+        self.identity_targets = identity_targets
 
     def __len__(self): return len(self.paths)
 
     def __getitem__(self, index):
-        return {"face_embs": self.embeddings[index], "pixel_values": load_training_image(self.paths[index])}
+        batch = {"face_embs": self.embeddings[index], "pixel_values": load_training_image(self.paths[index])}
+        if self.identity_targets is not None: batch["identity_target"] = self.identity_targets[index]
+        return batch
 
 
 def load_image_manifest(config, required_indices: torch.Tensor) -> tuple[list[Path], dict]:

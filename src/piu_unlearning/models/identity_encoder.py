@@ -9,6 +9,23 @@ import torch.nn.functional as F
 from torch import nn
 
 
+IRSE50_REPO = "AIRI-Institute/StyleFeatureEditor"
+IRSE50_REVISION = "5a50cb1b78da946be8163b8b255d486996fd2c73"
+IRSE50_FILENAME = "pretrained_models/model_ir_se50.pth"
+
+
+def resolve_identity_checkpoint(checkpoint: Path | None) -> Path:
+    """Use supplied weights or fetch the pinned IR-SE50 checkpoint into the HF cache."""
+    if checkpoint is None:
+        from huggingface_hub import hf_hub_download
+
+        print("Resolving WID IR-SE50 weights (downloaded once, then cached)...", flush=True)
+        checkpoint = Path(hf_hub_download(IRSE50_REPO, IRSE50_FILENAME, revision=IRSE50_REVISION))
+    checkpoint = checkpoint.expanduser().resolve()
+    if not checkpoint.is_file(): raise FileNotFoundError(f"IR-SE50 checkpoint not found: {checkpoint}")
+    return checkpoint
+
+
 class SqueezeExcitation(nn.Module):
     def __init__(self, channels: int):
         super().__init__()

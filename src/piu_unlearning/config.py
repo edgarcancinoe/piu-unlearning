@@ -161,6 +161,7 @@ class WIDConfig(TrainingConfig):
     gradient_accumulation_steps: int = 16
     training_steps: int = 100
     learning_rate: float = 5e-6
+    weight_decay: float = 0.0
     max_grad_norm: float | None = 1.0
     model_loss_weight: float = 1.0
     identity_loss_weight: float = 0.1
@@ -227,7 +228,7 @@ def parse_config(argv: list[str] | None = None) -> PIUConfig | SISSConfig | UCEC
         parser.add_argument("--image-manifest", type=Path, help="Row-aligned manifest produced by piu-prepare-images.")
         parser.add_argument("--image-root", type=Path, help="Override the image root recorded in the manifest.")
     if method_args.method == "wid":
-        parser.add_argument("--identity-checkpoint", type=Path, help="Trusted IR-SE50 state-dict checkpoint; required when identity loss is enabled.")
+        parser.add_argument("--identity-checkpoint", type=Path, help="Local IR-SE50 state-dict checkpoint; omitted downloads pinned pretrained weights automatically.")
         parser.add_argument("--identity-channel-order", choices=("rgb", "bgr"), default=WIDConfig.identity_channel_order)
         parser.add_argument("--model-loss-weight", type=float, default=WIDConfig.model_loss_weight)
         parser.add_argument("--identity-loss-weight", type=float, default=WIDConfig.identity_loss_weight)

@@ -71,7 +71,7 @@ def make_wid_context():
     teacher = copy.deepcopy(model).eval().requires_grad_(False)
     teacher.weight.add_(0.1)
     noise = NoisePredictionContext(model, teacher, DDPMScheduler(num_train_timesteps=10), TinyConditioner(), torch.tensor([[[0., 1., 0.]]]), torch.device("cpu"))
-    return WIDContext(noise, TinyVAE().eval().requires_grad_(False), IdentityEncoder(TinyRecognizer(), "bgr"), torch.tensor([[0., 1., 0.]]))
+    return WIDContext(noise, TinyVAE().eval().requires_grad_(False), IdentityEncoder(TinyRecognizer(), "bgr"))
 
 
 def make_image_fixture(root):
@@ -99,6 +99,7 @@ class WIDTests(unittest.TestCase):
         config = parse_config(["--method", "wid", "--identity-id", "512"])
         self.assertEqual(config, WIDConfig(identity_id=512))
         self.assertEqual((config.learning_rate, config.training_steps, config.identity_loss_weight), (5e-6, 100, 0.1))
+        self.assertEqual(config.weight_decay, 0)
         self.assertEqual((config.batch_size, config.gradient_accumulation_steps, config.max_grad_norm), (4, 16, 1))
         self.assertEqual((config.train_mode, config.optimizer, config.preservation_weight), ("full", "adamw", 0))
         self.assertNotIn("forget_sampling", asdict(config))
@@ -160,21 +161,23 @@ class WIDTests(unittest.TestCase):
             np.save(config.labels_path, np.zeros(24, dtype=np.int64))
             with self.assertRaisesRegex(ValueError, "labels.npy"): load_image_manifest(config, split.forget_train.indices)
 
-    def test_target_uses_same_encoder_and_only_retained_training_images(self):
+    def test_target_uses_each_original_forget_training_image(self):
         with tempfile.TemporaryDirectory() as directory:
             config, split, _ = make_image_fixture(Path(directory))
             anchor_id = int(split.retain_train.labels[0])
             encoder = IdentityEncoder(TinyRecognizer(), "bgr")
             with patch("piu_unlearning.methods.reference.select_anchor_embedding", return_value=(torch.tensor([1., 0., 0.]), anchor_id, 0.2)), patch("piu_unlearning.methods.wid.load_identity_encoder", return_value=encoder):
                 inputs = prepare_wid_inputs(split, config)
-            expected_indices = split.retain_train.indices[split.retain_train.labels == anchor_id]
-            self.assertEqual(inputs.metadata["anchor_indices"], expected_indices.tolist())
-            self.assertFalse(set(inputs.metadata["anchor_indices"]) & set(split.retain_validation.indices.tolist()))
+            expected_indices = split.forget_train.indices
+            self.assertEqual(inputs.metadata["target_mode"], "original_images")
+            self.assertEqual(inputs.metadata["forget_indices"], expected_indices.tolist())
             root = Path(directory) / "images"
-            with torch.no_grad(): target = F.normalize(encoder(torch.stack([load_training_image(root / f"{index:04d}.png") for index in expected_indices])).mean(dim=0, keepdim=True), dim=-1)
+            with torch.no_grad(): target = encoder(torch.stack([load_training_image(root / f"{index:04d}.png") for index in expected_indices]))
             torch.testing.assert_close(inputs.identity_target, target)
             self.assertFalse(inputs.identity_target.requires_grad)
-            self.assertFalse(torch.equal(inputs.identity_target, inputs.reference.embedding))
+            for index in range(len(inputs.dataset)):
+                torch.testing.assert_close(inputs.dataset[index]["identity_target"], target[index])
+            self.assertEqual(len({tuple(row.tolist()) for row in target}), len(target))
 
     def test_reconstruction_equation(self):
         context = make_wid_context()
@@ -183,7 +186,7 @@ class WIDTests(unittest.TestCase):
         noisy = context.noise.scheduler.add_noise(clean, noise, timesteps)
         torch.testing.assert_close(reconstruct_clean_latents(noisy, noise, timesteps, context.noise.scheduler), clean)
 
-    def test_disabled_identity_loss_skips_encoder_and_requires_checkpoint(self):
+    def test_disabled_identity_loss_skips_encoder_and_download(self):
         with tempfile.TemporaryDirectory() as directory:
             config, split, _ = make_image_fixture(Path(directory))
             anchor_id = int(split.retain_train.labels[0])
@@ -192,14 +195,14 @@ class WIDTests(unittest.TestCase):
                 inputs = prepare_wid_inputs(split, replace(config, identity_loss_weight=0, identity_checkpoint=None))
                 self.assertIsNone(inputs.encoder)
                 self.assertIsNone(inputs.identity_target)
-                with self.assertRaisesRegex(ValueError, "identity-checkpoint"):
-                    prepare_wid_inputs(split, replace(config, identity_checkpoint=None))
+                with patch("huggingface_hub.hf_hub_download", side_effect=AssertionError("Disabled identity branch must not download weights")):
+                    prepare_wid_inputs(split, replace(config, identity_loss_weight=0, identity_checkpoint=None))
 
     def test_loss_equation_shared_inputs_and_identity_only_gradients(self):
         for model_weight in (0.0, 1.0):
             context = make_wid_context()
             config = WIDConfig(identity_id=0, model_loss_weight=model_weight)
-            batch = {"face_embs": torch.tensor([[0.2, 0.3, 0.7]]), "pixel_values": torch.linspace(-1, 1, 192).reshape(1, 3, 8, 8)}
+            batch = {"face_embs": torch.tensor([[0.2, 0.3, 0.7]]), "pixel_values": torch.linspace(-1, 1, 192).reshape(1, 3, 8, 8), "identity_target": torch.tensor([[0., 1., 0.]])}
             with patch("torch.randint", return_value=torch.tensor([4])), patch("torch.randn_like", side_effect=lambda value: torch.full_like(value, 0.5)):
                 result = build_method(config).compute_loss(batch, None, context)
             student_call, teacher_call = context.noise.model.calls[0], context.noise.teacher.calls[0]
@@ -214,7 +217,7 @@ class WIDTests(unittest.TestCase):
             z0 = (expected_noisy - (1 - alpha).sqrt() * prediction) / alpha.sqrt()
             decoded = F.interpolate(z0 / context.vae.config.scaling_factor * context.vae.scale, size=(8, 8))
             ids = context.identity_encoder(decoded)
-            expected_id_loss = (ids - context.identity_target).square().mean()
+            expected_id_loss = (ids - batch["identity_target"]).square().mean()
             expected = model_weight * F.mse_loss(prediction, teacher) + config.identity_loss_weight * expected_id_loss
             torch.testing.assert_close(result.loss, expected)
             torch.testing.assert_close(result.metrics["identity_loss"], expected_id_loss)
@@ -224,7 +227,7 @@ class WIDTests(unittest.TestCase):
                 self.assertTrue(all(parameter.grad is None for parameter in module.parameters()))
 
     def test_disabled_identity_and_optional_preservation(self):
-        context = replace(make_wid_context(), identity_encoder=None, identity_target=None)
+        context = replace(make_wid_context(), identity_encoder=None)
         config = WIDConfig(identity_id=0, identity_loss_weight=0, preservation_weight=2)
         batch = {"face_embs": torch.ones(1, 3), "pixel_values": torch.randn(1, 3, 8, 8)}
         result = build_method(config).compute_loss(batch, torch.ones(1, 3), context)
@@ -237,7 +240,7 @@ class WIDTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             context = make_wid_context()
             config = WIDConfig(identity_id=0, output_dir=Path(directory), training_steps=1, gradient_accumulation_steps=2, evaluation_every=0)
-            batch = {"face_embs": torch.ones(1, 3), "pixel_values": torch.randn(1, 3, 8, 8)}
+            batch = {"face_embs": torch.ones(1, 3), "pixel_values": torch.randn(1, 3, 8, 8), "identity_target": torch.tensor([[0., 1., 0.]])}
             method = build_method(config)
             with patch("torch.nn.utils.clip_grad_norm_", wraps=torch.nn.utils.clip_grad_norm_) as clip:
                 path = train_model(context.noise.model, lambda forget, retain: method.compute_loss(forget, retain, context), [batch, batch], None, config)
@@ -262,7 +265,7 @@ class WIDTests(unittest.TestCase):
             with patch("piu_unlearning.methods.reference.select_anchor_embedding", return_value=(torch.tensor([1., 0., 0.]), anchor_id, 0.2)), patch("piu_unlearning.methods.wid.load_identity_encoder", return_value=IdentityEncoder(TinyRecognizer(), "bgr")), patch("piu_unlearning.main.Arc2FaceIdentityConditioner", return_value=TinyConditioner()):
                 checkpoint = unlearn_identity(model, split, create_evaluation_conditions(split, config), config)
             self.assertTrue(checkpoint.is_file())
-            self.assertEqual(json.loads((config.output_dir / "wid_identity.json").read_text())["target_mode"], "anchor_images")
+            self.assertEqual(json.loads((config.output_dir / "wid_identity.json").read_text())["target_mode"], "original_images")
             self.assertTrue((config.output_dir / "identity_target.pt").is_file())
             bad = replace(config, image_manifest=Path(directory) / "missing.json")
             with patch("piu_unlearning.methods.reference.select_anchor_embedding", return_value=(torch.tensor([1., 0., 0.]), anchor_id, 0.2)), patch("piu_unlearning.main.load_arc2face") as load_model:
