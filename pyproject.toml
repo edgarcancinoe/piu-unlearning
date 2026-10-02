@@ -19,6 +19,7 @@ dependencies = [
     "huggingface-hub>=0.23.2,<1.0",
     "numpy>=1.23.5,<2",
     "pillow>=10",
+    "pyarrow>=14",
     "insightface==0.7.3",
     "onnxruntime-gpu==1.23.2; platform_system != 'Darwin'",
     "onnxruntime==1.23.2; platform_system == 'Darwin'",
@@ -27,15 +28,14 @@ dependencies = [
 
 [project.optional-dependencies]
 data = [
-    "pyarrow>=14",
     "scikit-learn==1.7.2",
 ]
 
 [project.scripts]
 piu-demo = "piu_unlearning.main:main"
-piu-prepare-data = "piu_unlearning.prepare_data:main"
-piu-recompute-data = "piu_unlearning.prepare_data:recompute_main"
-piu-prepare-images = "piu_unlearning.prepare_data:images_main"
+piu-prepare-data = "piu_unlearning.dataset.cli:main"
+piu-recompute-data = "piu_unlearning.dataset.cli:recompute_main"
+piu-prepare-images = "piu_unlearning.dataset.cli:images_main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

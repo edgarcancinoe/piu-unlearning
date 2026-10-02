@@ -1,6 +1,6 @@
 # WID implementation plan
 
-Status: implemented as the initial single-step adaptation. See [WID usage](WID.md) for artifact requirements, the explicit identity-target correction, and validation limits. This document preserves the pre-implementation analysis.
+Status: implemented as the initial single-step adaptation. See [WID usage](WID.md) for artifact requirements and current configuration. This document preserves the pre-implementation analysis.
 
 This plan maps the inspected `unlearning-identities` implementation onto the smaller `piu-unlearning` codebase. It targets the legacy Arc2Face adaptation, not an independently verified reproduction of the original WID paper. No runtime changes are required for this planning step.
 
@@ -39,15 +39,11 @@ Canonical preparation currently downloads embeddings, labels, and centroids, but
 
 Add an explicit row-aligned manifest plus an image root. Select images using `split.forget_train.indices`; never infer alignment from a sorted directory listing or just matching row counts. Obtain the canonical mapping from the original `image_paths.txt`/export metadata and validate it against the published artifact ordering. The legacy dataset upload script iterates over aligned paths and labels, but that alone does not establish equivalence between every dataset/artifact revision.
 
-Make image preparation opt-in. PIU and UCE work with embeddings alone; SISS and WID require verified real images. Missing mappings or files should fail before model loading, without silently dropping rows or recomputing identity labels.
+Make image preparation opt-in. PIU and UCE work with embeddings alone; SISS and WID need the hosted real images. Missing mappings or files should fail before model loading, without silently dropping rows or recomputing identity labels.
 
 ### Recognition-space compatibility
 
-The final-run preset selects `ir_se50` and `/home/jose/backbone_ir_se_50.pth`. The identity target is still taken directly from the stored ArcFace anchor embedding. There is no compatibility check in the training path. An alignment diagnostic exists, but the inspected tests use synthetic weights and do not establish compatibility of the real models.
-
-Do not assume two 512-dimensional face embeddings are comparable. First establish checkpoint provenance, preprocessing, and output parity with the recognizer that produced the stored embeddings. Test identical aligned crops to isolate model differences, then test the complete image preprocessing path. The old training preprocessing resizes the entire decoded image to 112 pixels and swaps RGB to BGR; evaluation instead detects and aligns a face. Channel order, normalization, and cropping need explicit validation.
-
-Preferred path: one verified compatible differentiable recognizer. If that is unavailable, compute the identity-loss anchor target from retained anchor images using the same training recognizer as the decoded prediction. Keep the original ArcFace anchor for diffusion conditioning and selection. This is a deliberate correction to the legacy target construction, not numerically identical reproduction, and must be documented before adoption. Do not silently default to the unchecked cross-backend comparison.
+The identity target is computed from retained anchor images using the same differentiable recognizer as the decoded prediction. Keep the stored ArcFace anchor for diffusion conditioning and proximity selection; the two embedding spaces are not compared.
 
 The required real checkpoint and canonical image manifest were not found among the inspected repository files. The core loss can be implemented and tested with small models while these artifacts are resolved, but full reproduction cannot be certified without them.
 
@@ -78,8 +74,8 @@ Treat settings inferred from the current preset as provisional until checked aga
 | Location | Responsibility |
 | --- | --- |
 | `data.py` | One paired-image dataset and loader using the existing split indices; reuse the seeded sampler pattern. |
-| `prepare_data.py` | Opt-in image materialization and row-manifest validation, without changing existing embedding preparation. |
-| `models/identity_encoder.py` | Load one verified frozen training recognizer, perform differentiable preprocessing, normalize outputs, and record provenance. Leave the ONNX evaluation extractor unchanged. |
+| `dataset/` | Fetch the hosted artifacts and images, preserve their row mapping, and optionally recompute embeddings/clusters. |
+| `models/identity_encoder.py` | Load one frozen training recognizer, perform differentiable preprocessing, normalize outputs, and record provenance. Leave the ONNX evaluation extractor unchanged. |
 | `methods/wid.py` | `WID.prepare_reference`, `WID.compute_loss`, and a small explicit `WIDContext` containing the shared noise context, VAE, training recognizer, and identity target. |
 | `config.py`, `methods/__init__.py`, `main.py` | Add `WIDConfig`, explicit dispatch, dependency validation, and context/loader assembly. |
 | `training/runner.py` | Reuse the loop; add optional clipping with default disabled for existing methods. Remove the assumption that every method has a negative-guidance checkpoint field. |
@@ -94,11 +90,11 @@ Initially omit iterative reconstruction, unused timestep gates, synthetic WID an
 
 ## Implementation order and acceptance checks
 
-1. Establish the manifest and recognizer/target contract. Check canonical ordering, missing paths, preprocessing, checkpoint provenance, and compatibility before expensive generation.
+1. Establish the dataset row mapping and recognizer/target contract before expensive generation.
 2. Add the dataset and recognizer modules. Test row pairing, training-only selection, RGB/range/resolution, frozen parameters, and gradients through preprocessing.
 3. Implement the single-step WID loss independently. Test the reconstruction equation, VAE scaling, shared noisy inputs/timesteps, exact mean-MSE reduction, and loss/gradient parity against the old implementation under fixed tensors.
 4. Integrate through the existing runner. Verify nonzero U-Net gradients from the identity term alone, no teacher/VAE/recognizer parameter gradients, clipping after accumulation, disabled-identity-loss behavior, checkpoint serialization, and separate component logs.
 5. Add CLI, plots, and comparison-launcher support. Retain all existing regression tests and add a mocked end-to-end WID run. Verify identical evaluation manifests across methods, with no holdout images used to construct the identity target.
-6. Run a short CUDA experiment with real images and verified weights. Check finite losses/gradients, memory use, target provenance, checkpoints, component curves, and before/after outputs. Only then run the selected full configuration and assess reproduction.
+6. Run a short CUDA experiment with real images and the selected checkpoint. Check losses, memory use, target provenance, checkpoints, component curves, and before/after outputs. Only then run the selected full configuration and assess reproduction.
 
 Keep the WID usage guide in this folder once implemented; the main README needs only the existing baseline links.

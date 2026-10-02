@@ -6,13 +6,13 @@ This implements the Arc2Face SISS adaptation described in [PIU Appendix C.1](htt
 
 ## Prepare images and run
 
-SISS requires the verified, row-aligned `image_manifest.json` produced by `piu-prepare-images`. Follow the [image preparation instructions](WID.md#prepare-real-images) using the original filename mapping for the prepared embeddings. Both forget-training and retain-training images must be available. A recognition checkpoint is not needed for SISS training.
+SISS needs a row-aligned `image_manifest.json`. The demo downloads the hosted images and prepares the manifest automatically when they are missing. To stage them in advance or use recomputed embeddings, follow the [image preparation instructions](WID.md#prepare-real-images). Both forget-training and retain-training images must be available. A recognition checkpoint is not needed for SISS training.
 
 ```bash
 piu-demo --method siss --identity-id 512 --data-dir data/celebahq_512
 ```
 
-Use `--image-manifest` or `--image-root` to override the manifest or image directory. Missing, changed, or unverified images fail before diffusion model loading. Validation images are excluded from training.
+Use `--image-manifest` or `--image-root` to override the manifest or image directory. Missing or changed images fail before diffusion model loading. Validation images are excluded from training.
 
 ## Training
 

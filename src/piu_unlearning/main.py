@@ -11,6 +11,7 @@ import torch
 
 from piu_unlearning.config import RunConfig, SISSConfig, UCEConfig, WIDConfig, parse_config
 from piu_unlearning.data import EvaluationConditions, ExperimentSplit, create_embedding_loaders, create_evaluation_conditions, create_experiment_split, create_training_loaders, load_prepared_data, save_evaluation_conditions, write_split_manifest
+from piu_unlearning.dataset import prepare_for_demo
 from piu_unlearning.evaluation import EvaluationReport, evaluate_before_after, evaluate_training_ism
 from piu_unlearning.models.arcface import ArcFaceExtractor
 from piu_unlearning.models.arc2face import Arc2FaceIdentityConditioner, GeneratedSamples, generate_evaluation_samples, load_arc2face, load_generated_samples
@@ -163,7 +164,9 @@ def print_comparison(result: UnlearningResult) -> None:
 
 
 def main() -> None:
-    run_demo(parse_config())
+    config = parse_config()
+    prepare_for_demo(config)
+    run_demo(config)
 
 
 if __name__ == "__main__":

@@ -175,7 +175,7 @@ class SISSTests(unittest.TestCase):
             write_training_curves(path.parent / 'loss_history.jsonl', path.parent / 'ism_history.jsonl', Path(directory) / 'curves.png', 'siss')
             self.assertTrue((Path(directory) / 'curves.png').is_file())
 
-    def test_verified_images_load_and_changes_are_rejected(self):
+    def test_image_manifest_loads_pairs_and_rejects_changed_files(self):
         from test_wid import make_image_fixture
         with tempfile.TemporaryDirectory() as directory:
             wid, split, _ = make_image_fixture(Path(directory))
@@ -185,4 +185,4 @@ class SISSTests(unittest.TestCase):
             self.assertEqual(next(iter(forget))['pixel_values'].shape, (2, 3, 512, 512))
             self.assertEqual(next(iter(retain))['pixel_values'].shape, (2, 3, 512, 512))
             inputs.retain.paths[0].write_bytes(b'changed')
-            with self.assertRaisesRegex(ValueError, 'Image changed'): prepare_siss_inputs(split, config)
+            with self.assertRaisesRegex(ValueError, 'Image changed since manifest creation'): prepare_siss_inputs(split, config)

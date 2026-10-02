@@ -13,6 +13,7 @@ BASE_MODEL = "stable-diffusion-v1-5/stable-diffusion-v1-5"
 BASE_MODEL_REVISION = "451f4fe16113bff5a5d2269ed5ad43b0592e9a14"
 OUTPUT_DIR = Path("outputs/demo")
 DATA_DIR = Path("data/celebahq_512")
+PAPER_LABELS_FILE = "srk_labels_eps0.35.npy"
 SURGICAL_LAYERS = ("down_blocks.2", "mid_block", "up_blocks.1", "up_blocks.2")
 
 
@@ -49,7 +50,9 @@ class RunConfig:
     def embeddings_path(self) -> Path: return self.data_dir / "embeddings.npy"
 
     @property
-    def labels_path(self) -> Path: return self.data_dir / "labels.npy"
+    def labels_path(self) -> Path:
+        paper_labels = self.data_dir / PAPER_LABELS_FILE
+        return paper_labels if paper_labels.is_file() else self.data_dir / "labels.npy"
 
     @property
     def centroids_path(self) -> Path: return self.data_dir / "centroids.npy"
@@ -166,14 +169,12 @@ class WIDConfig(TrainingConfig):
     image_root: Path | None = None
     identity_checkpoint: Path | None = None
     identity_channel_order: str = "bgr"
-    identity_target: str = "anchor_images"
 
     def __post_init__(self) -> None:
         super().__post_init__()
         if min(self.model_loss_weight, self.identity_loss_weight, self.preservation_weight) < 0: raise ValueError("WID loss weights must be nonnegative")
         if self.model_loss_weight + self.identity_loss_weight == 0: raise ValueError("WID needs a model or identity objective")
         if self.identity_channel_order not in ("rgb", "bgr"): raise ValueError("identity_channel_order must be rgb or bgr")
-        if self.identity_target not in ("anchor_images", "stored_arcface"): raise ValueError("Unknown identity_target")
 
 
 def parse_config(argv: list[str] | None = None) -> PIUConfig | SISSConfig | UCEConfig | WIDConfig:
@@ -228,7 +229,6 @@ def parse_config(argv: list[str] | None = None) -> PIUConfig | SISSConfig | UCEC
     if method_args.method == "wid":
         parser.add_argument("--identity-checkpoint", type=Path, help="Trusted IR-SE50 state-dict checkpoint; required when identity loss is enabled.")
         parser.add_argument("--identity-channel-order", choices=("rgb", "bgr"), default=WIDConfig.identity_channel_order)
-        parser.add_argument("--identity-target", choices=("anchor_images", "stored_arcface"), default=WIDConfig.identity_target)
         parser.add_argument("--model-loss-weight", type=float, default=WIDConfig.model_loss_weight)
         parser.add_argument("--identity-loss-weight", type=float, default=WIDConfig.identity_loss_weight)
     if method_args.method in ("piu", "uce", "wid"):

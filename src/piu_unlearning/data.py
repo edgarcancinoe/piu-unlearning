@@ -208,23 +208,21 @@ class PairedImageDataset(Dataset):
 
 
 def load_image_manifest(config, required_indices: torch.Tensor) -> tuple[list[Path], dict]:
-    from piu_unlearning.prepare_data import IMAGE_ALIGNMENT_MIN_COSINE, sha256
+    from piu_unlearning.dataset.hub import sha256
 
     path = config.image_manifest or config.data_dir / "image_manifest.json"
     manifest = json.loads(path.read_text(encoding="utf-8"))
     rows = manifest["rows"]
-    if manifest["version"] != 1 or len(rows) != len(np.load(config.labels_path)): raise ValueError("Unsupported or misaligned image manifest")
-    minimum = manifest["alignment"]["min_cosine"]
-    if manifest["alignment"]["verified_rows"] != len(rows) or not np.isfinite(minimum) or minimum < IMAGE_ALIGNMENT_MIN_COSINE: raise ValueError("Image manifest has not passed row verification")
+    if manifest["version"] != 2 or len(rows) != len(np.load(config.labels_path)) or len(rows) != len(np.load(config.embeddings_path, mmap_mode="r")): raise ValueError("Unsupported or misaligned image manifest; rerun piu-prepare-images")
     for name, data_path in (("embeddings", config.embeddings_path), ("labels", config.labels_path)):
         if manifest[f"{name}_sha256"] != sha256(data_path): raise ValueError(f"Image manifest does not match {name}.npy; rerun piu-prepare-images")
     root = config.image_root or path.parent / manifest["image_root"]
     if any(not row["path"] or Path(row["path"]).name != row["path"] for row in rows): raise ValueError("Manifest image paths must be plain file names")
     paths = [root / row["path"] for row in rows]
-    for index in tqdm(required_indices.tolist(), desc="Verifying training images", unit="image"):
-        if sha256(paths[index]) != rows[index]["sha256"]: raise ValueError(f"Image changed since verification: {paths[index]}")
+    for index in tqdm(required_indices.tolist(), desc="Loading training images", unit="image"):
+        if sha256(paths[index]) != rows[index]["sha256"]: raise ValueError(f"Image changed since manifest creation: {paths[index]}")
         with Image.open(paths[index]) as image: image.verify()
-    return paths, {"path": str(path.resolve()), "sha256": sha256(path), "image_root": str(root.resolve()), "alignment": manifest["alignment"]}
+    return paths, {"path": str(path.resolve()), "sha256": sha256(path), "image_root": str(root.resolve()), "source": manifest.get("source")}
 
 
 def select_anchor_embedding(split: ExperimentSplit, config: RunConfig) -> tuple[torch.Tensor, int, float]:

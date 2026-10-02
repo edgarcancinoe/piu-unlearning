@@ -18,6 +18,7 @@ import numpy as np
 
 from piu_unlearning.config import RunConfig, parse_config
 from piu_unlearning.data import create_evaluation_conditions, create_experiment_split, load_prepared_data, save_evaluation_conditions, select_anchor_embedding, write_split_manifest
+from piu_unlearning.dataset import prepare_for_demo
 from piu_unlearning.models.arc2face import GeneratedSamples
 from piu_unlearning.methods.siss import prepare_siss_inputs
 from piu_unlearning.methods.wid import prepare_wid_inputs
@@ -155,6 +156,7 @@ def launch(args):
             print(json.dumps(asdict(parse_config(job["args"])), indent=2, default=str))
         return
     if args.output_dir.exists() and any(args.output_dir.iterdir()): raise ValueError("Output directory is not empty; choose a new --output-dir to avoid mixing runs")
+    for job in jobs: prepare_for_demo(parse_config(job["args"]))
     split, conditions = prepare_split(jobs[0]["split_args"])
     if any(job["method"] != "siss" for job in jobs):
         print("Checking the shared anchor...", flush=True)

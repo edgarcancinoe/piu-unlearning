@@ -40,7 +40,7 @@ python -m pip install --no-deps -e .
 
 ## Prepare embeddings
 
-Choose either option below. Both prepare the embeddings, identity labels, centroids, and face models needed by the demo.
+The demo prepares missing data from the hosted dataset on first run. To download it ahead of time, use either option below. Both prepare the embeddings, identity labels, centroids, and face models.
 
 ### Option 1: Use the paper embeddings
 
@@ -51,6 +51,12 @@ piu-prepare-data --output-dir data/celebahq_512
 piu-demo --identity-id 512 --data-dir data/celebahq_512 --use-anchor-overrides
 ```
 
+For SISS or WID, the demo also downloads the images and creates a row-aligned manifest automatically. To do this ahead of time:
+
+```bash
+piu-prepare-images --data-dir data/celebahq_512 --download-images
+```
+
 `--use-anchor-overrides` reuses the exact recorded paper anchor selections where available. Omit it to select anchors automatically based on proximity.
 
 ### Option 2: Regenerate embeddings
@@ -59,6 +65,14 @@ Download the CelebA-HQ images from the same dataset, extract ArcFace embeddings,
 
 ```bash
 piu-recompute-data --output-dir data/celebahq_512_recomputed --device cuda
+```
+
+This option uses scikit-learn for DBSCAN. If it is not installed, add it with `python -m pip install scikit-learn==1.7.2`.
+
+For SISS or WID, materialize the same dataset images and check their order against the recomputed `file_names.txt`:
+
+```bash
+piu-prepare-images --data-dir data/celebahq_512_recomputed --download-images
 ```
 
 The default clustering uses DBSCAN with cosine distance, `eps=0.35`, and `min_samples=2`; noise samples become singleton identities. Extraction is cached per shard, so rerunning the command reuses completed shards. Use `--device cpu` for CPU extraction.
@@ -82,7 +96,7 @@ Run the demo with an ID from those labels, replacing `YOUR_ID` below. Do not use
 piu-demo --identity-id YOUR_ID --data-dir data/celebahq_512_recomputed --output-dir outputs/recomputed_demo
 ```
 
-`metadata.json` records the extraction and clustering settings and the adjusted Rand index against the published partition. 
+`metadata.json` records the extraction and clustering settings. The image manifest records dataset row order and file hashes; image preparation never re-extracts embeddings.
 
 ## Demo outputs
 

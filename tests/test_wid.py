@@ -20,7 +20,7 @@ from piu_unlearning.data import PairedImageDataset, create_evaluation_conditions
 from piu_unlearning.methods import build_method
 from piu_unlearning.methods.wid import WIDContext, prepare_wid_inputs, reconstruct_clean_latents
 from piu_unlearning.models.identity_encoder import IdentityEncoder, IRSE50, load_identity_encoder, preprocess_identity_images
-from piu_unlearning.prepare_data import prepare_image_manifest
+from piu_unlearning.dataset.images import write_image_manifest
 from piu_unlearning.training.losses import NoisePredictionContext
 from piu_unlearning.training.runner import train_model
 from piu_unlearning.visualization import write_training_curves
@@ -86,8 +86,7 @@ def make_image_fixture(root):
     np.save(data_dir / "labels.npy", labels.numpy())
     paths_file = root / "image_paths.txt"
     paths_file.write_text("\n".join(names) + "\n")
-    extractor = lambda rgb: embeddings[int(rgb[0, 0, 0])].numpy()
-    manifest = prepare_image_manifest(data_dir, paths_file, image_root, extractor)
+    manifest = write_image_manifest(data_dir, paths_file, image_root, "test-revision")
     config = WIDConfig(identity_id=0, data_dir=data_dir, output_dir=root / "run", device="cpu", identity_checkpoint=root / "recognizer.pt", num_samples=1, batch_size=1, gradient_accumulation_steps=1, training_steps=1, evaluation_every=0)
     config.identity_checkpoint.write_bytes(b"mock checkpoint")
     centroids = F.normalize(embeddings.reshape(6, 4, 3).mean(dim=1), dim=1)
@@ -104,7 +103,6 @@ class WIDTests(unittest.TestCase):
         self.assertEqual((config.train_mode, config.optimizer, config.preservation_weight), ("full", "adamw", 0))
         self.assertNotIn("forget_sampling", asdict(config))
         self.assertNotIn("negative_guidance_scale", asdict(config))
-        self.assertEqual(config.identity_target, "anchor_images")
         with contextlib.redirect_stderr(io.StringIO()):
             for args in (["--forget-sampling", "centroid"], ["--negative-guidance-scale", "1"], ["--identity-loss-weight", "-1"], ["--max-grad-norm", "0"]):
                 with self.subTest(args=args), self.assertRaises(SystemExit): parse_config(["--method", "wid", "--identity-id", "512", *args])
@@ -162,22 +160,6 @@ class WIDTests(unittest.TestCase):
             np.save(config.labels_path, np.zeros(24, dtype=np.int64))
             with self.assertRaisesRegex(ValueError, "labels.npy"): load_image_manifest(config, split.forget_train.indices)
 
-    def test_manifest_rejects_wrong_row_order(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            config, split, _ = make_image_fixture(root)
-            embeddings = np.load(config.embeddings_path)
-            with self.assertRaisesRegex(ValueError, "mismatch at row"):
-                prepare_image_manifest(config.data_dir, root / "image_paths.txt", root / "images", lambda rgb: embeddings[(int(rgb[0, 0, 0]) + 1) % 24])
-
-    def test_manifest_rejects_nonfinite_verification(self):
-        with tempfile.TemporaryDirectory() as directory:
-            config, split, path = make_image_fixture(Path(directory))
-            manifest = json.loads(path.read_text())
-            manifest["alignment"]["min_cosine"] = float("nan")
-            path.write_text(json.dumps(manifest))
-            with self.assertRaisesRegex(ValueError, "row verification"): load_image_manifest(config, split.forget_train.indices)
-
     def test_target_uses_same_encoder_and_only_retained_training_images(self):
         with tempfile.TemporaryDirectory() as directory:
             config, split, _ = make_image_fixture(Path(directory))
@@ -185,8 +167,6 @@ class WIDTests(unittest.TestCase):
             encoder = IdentityEncoder(TinyRecognizer(), "bgr")
             with patch("piu_unlearning.methods.reference.select_anchor_embedding", return_value=(torch.tensor([1., 0., 0.]), anchor_id, 0.2)), patch("piu_unlearning.methods.wid.load_identity_encoder", return_value=encoder):
                 inputs = prepare_wid_inputs(split, config)
-                with self.assertRaisesRegex(ValueError, "incompatible"):
-                    prepare_wid_inputs(split, replace(config, identity_target="stored_arcface"))
             expected_indices = split.retain_train.indices[split.retain_train.labels == anchor_id]
             self.assertEqual(inputs.metadata["anchor_indices"], expected_indices.tolist())
             self.assertFalse(set(inputs.metadata["anchor_indices"]) & set(split.retain_validation.indices.tolist()))
@@ -203,22 +183,11 @@ class WIDTests(unittest.TestCase):
         noisy = context.noise.scheduler.add_noise(clean, noise, timesteps)
         torch.testing.assert_close(reconstruct_clean_latents(noisy, noise, timesteps, context.noise.scheduler), clean)
 
-    def test_verified_stored_target_and_disabled_encoder(self):
+    def test_disabled_identity_loss_skips_encoder_and_requires_checkpoint(self):
         with tempfile.TemporaryDirectory() as directory:
             config, split, _ = make_image_fixture(Path(directory))
-            embeddings = torch.from_numpy(np.load(config.embeddings_path))
             anchor_id = int(split.retain_train.labels[0])
             reference = F.normalize(split.retain_train.embeddings[split.retain_train.labels == anchor_id].mean(dim=0), dim=0)
-
-            class LookupEncoder(nn.Module):
-                def forward(self, pixels):
-                    indices = ((pixels[:, 0, 0, 0] + 1) * 127.5).round().long()
-                    return embeddings[indices]
-
-            with patch("piu_unlearning.methods.reference.select_anchor_embedding", return_value=(reference, anchor_id, 0.2)), patch("piu_unlearning.methods.wid.load_identity_encoder", return_value=LookupEncoder()):
-                inputs = prepare_wid_inputs(split, replace(config, identity_target="stored_arcface"))
-            torch.testing.assert_close(inputs.identity_target, reference.unsqueeze(0))
-            self.assertGreater(inputs.metadata["stored_target_min_cosine"], 0.99)
             with patch("piu_unlearning.methods.reference.select_anchor_embedding", return_value=(reference, anchor_id, 0.2)), patch("piu_unlearning.methods.wid.load_identity_encoder", side_effect=AssertionError("Disabled identity branch must not load weights")):
                 inputs = prepare_wid_inputs(split, replace(config, identity_loss_weight=0, identity_checkpoint=None))
                 self.assertIsNone(inputs.encoder)

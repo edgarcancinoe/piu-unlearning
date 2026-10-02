@@ -11,7 +11,7 @@ from piu_unlearning.config import WIDConfig
 from piu_unlearning.data import EmbeddingPartition, ExperimentSplit, PairedImageDataset, load_image_manifest
 from piu_unlearning.methods.reference import ReferenceIdentity, proximity_reference
 from piu_unlearning.models.identity_encoder import IdentityEncoder, load_identity_encoder
-from piu_unlearning.prepare_data import sha256
+from piu_unlearning.dataset.hub import sha256
 from piu_unlearning.training.losses import LossOutput, NoisePredictionContext, sample_noisy_latents
 
 
@@ -43,23 +43,13 @@ def prepare_wid_inputs(split: ExperimentSplit, config: WIDConfig) -> WIDInputs:
     required = torch.cat([split.forget_train.indices, anchor.indices]) if config.identity_loss_weight else split.forget_train.indices
     paths, manifest = load_image_manifest(config, required)
     dataset = PairedImageDataset(split.forget_train, paths)
-    metadata = {"manifest": manifest, "target_mode": config.identity_target if config.identity_loss_weight else "disabled", "forget_indices": split.forget_train.indices.tolist(), "anchor_indices": anchor.indices.tolist() if config.identity_loss_weight else [], "anchor_id": reference.identity_id}
+    metadata = {"manifest": manifest, "target_mode": "anchor_images" if config.identity_loss_weight else "disabled", "forget_indices": split.forget_train.indices.tolist(), "anchor_indices": anchor.indices.tolist() if config.identity_loss_weight else [], "anchor_id": reference.identity_id}
     if not config.identity_loss_weight: return WIDInputs(dataset, reference, None, None, metadata)
     if config.identity_checkpoint is None: raise ValueError("WID identity loss requires --identity-checkpoint with trusted IR-SE50 weights")
     encoder = load_identity_encoder(config.identity_checkpoint, config.identity_channel_order)
     with torch.no_grad():
         anchor_embeddings = torch.cat([encoder(batch["pixel_values"]) for batch in DataLoader(PairedImageDataset(anchor, paths), batch_size=config.batch_size)])
         identity_target = F.normalize(anchor_embeddings.mean(dim=0, keepdim=True), dim=-1)
-        if config.identity_target == "stored_arcface":
-            forget_embeddings = torch.cat([encoder(batch["pixel_values"]) for batch in DataLoader(dataset, batch_size=config.batch_size)])
-            predicted = torch.cat([forget_embeddings, anchor_embeddings])
-            stored = torch.cat([split.forget_train.embeddings, anchor.embeddings])
-            similarities = F.cosine_similarity(predicted, stored, dim=-1)
-            minimum = float(similarities.min())
-            if not torch.isfinite(similarities).all() or minimum < 0.99:
-                raise ValueError(f"Training recognizer is incompatible with stored ArcFace embeddings (minimum cosine={minimum:.6f}); use --identity-target anchor_images")
-            metadata["stored_target_min_cosine"] = minimum
-            identity_target = F.normalize(reference.embedding, dim=-1)
     metadata.update(checkpoint=str(config.identity_checkpoint.resolve()), checkpoint_sha256=sha256(config.identity_checkpoint), backbone="ir_se50", channel_order=config.identity_channel_order, preprocessing="resize112_bilinear_full_image_minus1_to1", identity_loss="mean_mse", target_dimension=identity_target.shape[1])
     return WIDInputs(dataset, reference, encoder, identity_target.detach(), metadata)
 
