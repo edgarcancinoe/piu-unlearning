@@ -6,11 +6,7 @@ Official implementation of [PIU: Proximity-guided Identity Unlearning in ID-Cond
 
 PIU unlearns a target identity in Arc2Face by redirecting it toward an anchor identity selected in the ArcFace embedding space, while preserving other identities.
 
-The repository contains:
-
-- PIU training with proximity-based anchor selection.
-- Data preparation tools to download the published embeddings or recompute them from CelebA-HQ images.
-- A before/after demo with identity evaluation, training curves, and result visualization.
+The repository contains PIU training with proximity-based anchor selection and a demo including before/after visualization and training evaluation.
 
 ### PIU unlearning
 
@@ -40,35 +36,16 @@ python -m pip install --no-deps -e .
 
 ## Prepare embeddings
 
-The demo prepares missing data from the hosted dataset on first run. To download it ahead of time, use either option below. Both prepare the embeddings, identity labels, centroids, and face models.
-
 ### Option 1: Use the paper embeddings
 
 Download the exact artifacts used in the paper from [Hugging Face](https://huggingface.co/datasets/edgarcancinoe/celebahq_512_id_clusters).
 
-To download the raw paper files into the Hugging Face cache from a terminal:
-
-```bash
-hf download edgarcancinoe/celebahq_512_id_clusters \
-  paper_artifacts/embeddings.npy paper_artifacts/srk_labels_eps0.35.npy \
-  paper_artifacts/srk_centroids_eps0.35.npy \
-  --repo-type dataset --revision 47ac08e6c0f80da13752b8f2694a515da26f352e
-```
-
-Then prepare the files for the demo. This step also works without the `hf download` command above:
+To download the raw files into the Hugging Face cache from a terminal and prepare the files for the demo:
 
 ```bash
 piu-prepare-data --output-dir data/celebahq_512
 piu-demo --identity-id 512 --data-dir data/celebahq_512 --use-anchor-overrides
 ```
-
-For SISS or WID, the demo also downloads the images and creates a row-aligned manifest automatically. To do this ahead of time:
-
-```bash
-piu-prepare-images --data-dir data/celebahq_512 --download-images
-```
-
-`--use-anchor-overrides` reuses the exact recorded paper anchor selections where available. Omit it to select anchors automatically based on proximity.
 
 ### Option 2: Regenerate embeddings
 
@@ -86,7 +63,7 @@ For SISS or WID, materialize the same dataset images and check their order again
 piu-prepare-images --data-dir data/celebahq_512_recomputed --download-images
 ```
 
-The default clustering uses DBSCAN with cosine distance, `eps=0.35`, and `min_samples=2`; noise samples become singleton identities. Extraction is cached per shard, so rerunning the command reuses completed shards. Use `--device cpu` for CPU extraction.
+The default clustering uses DBSCAN with cosine distance, `eps=0.35`, and `min_samples=2`; noise samples become singleton identities. Use `--device cpu` for CPU extraction.
 
 To run extraction and clustering separately:
 
@@ -95,7 +72,7 @@ piu-recompute-data --output-dir data/celebahq_512_recomputed --device cuda --sta
 piu-recompute-data --output-dir data/celebahq_512_recomputed --stage clusters --eps 0.35 --min-samples 2
 ```
 
-Recomputed identity IDs may differ from the paper IDs. Inspection of the generated IDs and sample counts may be needed before choosing a desired target:
+Recomputed identity IDs may differ from the paper IDs.
 
 ```bash
 python -c "import numpy as np; ids, counts = np.unique(np.load('data/celebahq_512_recomputed/labels.npy'), return_counts=True); print(list(zip(ids.tolist(), counts.tolist())))"
@@ -113,7 +90,7 @@ piu-demo --identity-id YOUR_ID --data-dir data/celebahq_512_recomputed --output-
 
 Results are written to `outputs/demo` unless `--output-dir` is set. Each run saves the resolved configuration, data split, anchor metadata and embedding, U-Net checkpoint (`piu_unet.pt`), before/after images, and evaluation metrics. Training curves and aligned comparison grids are saved under `summary/`.
 
-Identity similarity (ISM) is evaluated every 50 optimizer steps by default. Use `--evaluation-every 0` to disable intermediate evaluation, or pass another interval. See `piu-demo --help` for the remaining options.
+Identity similarity (ISM) is evaluated every 50 optimizer steps by default. Use `--evaluation-every 0` to disable intermediate evaluation, or pass another interval.
 
 ## Baselines
 
