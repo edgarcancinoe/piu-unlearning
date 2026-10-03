@@ -4,7 +4,7 @@ Official implementation of [PIU: Proximity-guided Identity Unlearning in ID-Cond
 
 [Paper](https://arxiv.org/abs/2605.22311) | [Poster (PDF)](https://edgarcancinoe.github.io/projects/piu/PIU_poster.pdf)
 
-PIU unlearns a target identity in Arc2Face by redirecting it toward an anchor identity selected in the ArcFace embedding space, while preserving other identities.
+PIU unlearns a target identity in [Arc2Face](https://github.com/FoivosPar/Arc2Face) by redirecting it toward an anchor identity selected in the ArcFace embedding space, while preserving other identities.
 
 The repository contains PIU training with proximity-based anchor selection and a demo including before/after visualization and training evaluation.
 
