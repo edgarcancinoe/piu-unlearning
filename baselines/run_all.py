@@ -21,7 +21,7 @@ from piu_unlearning.data import create_evaluation_conditions, create_experiment_
 from piu_unlearning.dataset import prepare_for_demo
 from piu_unlearning.models.arc2face import GeneratedSamples
 from piu_unlearning.methods.siss import prepare_siss_inputs
-from piu_unlearning.methods.wid import prepare_wid_inputs
+from piu_unlearning.methods.wid import check_wid_inputs
 from piu_unlearning.visualization import write_method_comparison
 
 
@@ -46,6 +46,7 @@ def parse_args(argv=None):
     for method in METHODS: parser.add_argument(f"--{method}-args", default="", help=f"Quoted method-specific piu-demo options for {method.upper()}.")
     args = parser.parse_args(argv)
     if len(set(args.methods)) != len(args.methods): parser.error("Each method must appear only once")
+    if args.methods == ["siss"] and args.use_anchor_overrides: parser.error("--use-anchor-overrides is not supported for SISS-only runs")
     args.output_dir, args.data_dir = args.output_dir.resolve(), args.data_dir.resolve()
     return args
 
@@ -164,7 +165,7 @@ def launch(args):
     for job in jobs:
         print(f"Checking {job['method'].upper()} training inputs...", flush=True)
         if job["method"] == "siss": prepare_siss_inputs(split, parse_config(job["args"]))
-        if job["method"] == "wid": prepare_wid_inputs(split, parse_config(job["args"]))
+        if job["method"] == "wid": check_wid_inputs(split, parse_config(job["args"]))
     args.output_dir.mkdir(parents=True, exist_ok=True)
     write_split_manifest(split, args.output_dir / "split.json")
     save_evaluation_conditions(conditions, args.output_dir / "evaluation_conditions.npz")

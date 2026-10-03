@@ -14,7 +14,7 @@ WID downloads and caches its pinned IR-SE50 weights automatically. Use `--wid-ar
 - `--identity-id ID`: target identity.
 - `--methods ...`: methods and run order. Defaults to all four.
 - `--data-dir DIR`: paper or recomputed data.
-- `--use-anchor-overrides`: paper anchors only; omit for recomputed data.
+- `--use-anchor-overrides`: paper anchors only; omit for recomputed data and SISS-only runs.
 - `--output-dir DIR`: empty output directory.
 - `--dry-run`: preview settings without running.
 - `--METHOD-args='...'`: options for PIU, SISS, UCE, or WID. See [SISS](../docs/baselines/SISS.md), [UCE](../docs/baselines/UCE.md), and [WID](../docs/baselines/WID.md).

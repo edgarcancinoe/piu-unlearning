@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 from dataclasses import asdict, dataclass
 from functools import partial
@@ -34,6 +35,25 @@ class UnlearningResult:
     after_images: GeneratedSamples
     evaluation: EvaluationReport
     method: str = "piu"
+
+
+def baseline_metadata(config: RunConfig, conditions: EvaluationConditions) -> dict:
+    digest = hashlib.sha256()
+    for name, value in vars(conditions).items():
+        if isinstance(value, torch.Tensor):
+            array = value.detach().cpu().contiguous().numpy()
+            digest.update(json.dumps((name, array.shape, str(array.dtype))).encode())
+            digest.update(array.tobytes())
+        else:
+            digest.update(json.dumps((name, value)).encode())
+    fields = ("identity_id", "seed", "arc2face_model", "arc2face_revision", "base_model", "base_model_revision", "num_samples", "num_inference_steps", "guidance_scale")
+    return {name: getattr(config, name) for name in fields} | {"conditions_sha256": digest.hexdigest()}
+
+
+def check_baseline(config: RunConfig, conditions: EvaluationConditions, before_dir: Path) -> None:
+    metadata_path = before_dir / "baseline.json"
+    if not metadata_path.is_file() or json.loads(metadata_path.read_text(encoding="utf-8")) != baseline_metadata(config, conditions):
+        raise ValueError(f"Baseline images in {before_dir} do not match this run; rerun without --reuse-baseline")
 
 
 def unlearn_identity(model: StableDiffusionPipeline, split: ExperimentSplit, conditions: EvaluationConditions, config: RunConfig, wid_inputs: WIDInputs | None = None, siss_inputs: SISSInputs | None = None) -> Path:
@@ -90,14 +110,15 @@ def unlearn_identity(model: StableDiffusionPipeline, split: ExperimentSplit, con
 def run_demo(config: RunConfig, split: ExperimentSplit | None = None) -> UnlearningResult:
     before_dir = config.output_dir / "before"
     after_dir = config.output_dir / "after"
-    write_config(config, config.output_dir / "config.json")
     print(f"{config.method.upper()} demo for identity {config.identity_id}", flush=True)
-    print(f"Resolved configuration: {config.output_dir / 'config.json'}", flush=True)
     print("[1/6] Preparing canonical data splits and evaluation conditions", flush=True)
     if split is None:
         embeddings, labels, centroids, centroid_labels = load_prepared_data(config)
         split = create_experiment_split(embeddings, labels, centroids, centroid_labels, config)
     conditions = create_evaluation_conditions(split, config)
+    if config.reuse_baseline: check_baseline(config, conditions, before_dir)
+    write_config(config, config.output_dir / "config.json")
+    print(f"Resolved configuration: {config.output_dir / 'config.json'}", flush=True)
     wid_inputs = prepare_wid_inputs(split, config) if isinstance(config, WIDConfig) else None
     siss_inputs = prepare_siss_inputs(split, config) if isinstance(config, SISSConfig) else None
     write_split_manifest(split, config.output_dir / "split.json")
@@ -116,6 +137,8 @@ def run_demo(config: RunConfig, split: ExperimentSplit | None = None) -> Unlearn
     else:
         print(f"[3/6] Generating baseline samples ({config.num_samples} forget, {config.num_samples} retain)", flush=True)
         before_images = generate_evaluation_samples(model, conditions, config, before_dir, "Baseline")
+        before_dir.mkdir(parents=True, exist_ok=True)
+        (before_dir / "baseline.json").write_text(json.dumps(baseline_metadata(config, conditions), indent=2) + "\n", encoding="utf-8")
     if isinstance(config, UCEConfig):
         print(f"[4/6] Applying UCE closed-form edit ({config.edit_scope} cross-attention key/value projections)", flush=True)
     else:

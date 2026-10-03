@@ -91,7 +91,6 @@ def train_model(model: UNet2DConditionModel, compute_loss: Callable, forget_load
         "method": config.method,
         "config": json.loads(json.dumps(asdict(config), default=str)),
         "unet_state_dict": model.state_dict(),
-        "optimizer_state_dict": optimizer.state_dict(),
         "training_steps": config.training_steps,
         "gradient_accumulation_steps": config.gradient_accumulation_steps,
         "trainable_parameters": [name for name, parameter in model.named_parameters() if parameter.requires_grad],

@@ -7,12 +7,17 @@ from pathlib import Path
 import numpy as np
 
 from piu_unlearning.models.arcface import DET_SIZE, DET_THRESH, ArcFaceExtractor
+from piu_unlearning.config import PAPER_LABELS_FILE
 
 from .hub import DATASET_REPO, DATASET_REVISION, DETECTOR_FILE, DETECTOR_REPO, DETECTOR_REVISION, RECOGNIZER_FILE, RECOGNIZER_REPO, RECOGNIZER_REVISION, download_dataset, download_face_models
 
 
 DBSCAN_EPS = 0.35
 DBSCAN_MIN_SAMPLES = 2
+
+
+def check_recompute_dir(output_dir: Path) -> None:
+    if (output_dir / PAPER_LABELS_FILE).exists(): raise ValueError(f"Paper labels exist in {output_dir}; use a separate directory for recomputed data")
 
 
 def extract_shard(shard: Path, extractor: ArcFaceExtractor) -> dict[str, np.ndarray]:
@@ -35,6 +40,7 @@ def extract_shard(shard: Path, extractor: ArcFaceExtractor) -> dict[str, np.ndar
 
 
 def extract_embeddings(output_dir: Path, revision: str = DATASET_REVISION, device: str = "cuda", cache_dir: Path | None = None) -> None:
+    check_recompute_dir(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     shard_cache = output_dir / "embedding_shards" / revision
     shard_cache.mkdir(parents=True, exist_ok=True)
@@ -68,6 +74,7 @@ def compute_centroids(embeddings: np.ndarray, labels: np.ndarray) -> tuple[np.nd
 
 
 def cluster_embeddings(output_dir: Path, revision: str = DATASET_REVISION, eps: float = DBSCAN_EPS, min_samples: int = DBSCAN_MIN_SAMPLES) -> None:
+    check_recompute_dir(output_dir)
     from sklearn.cluster import DBSCAN
 
     embeddings = np.load(output_dir / "embeddings.npy").astype(np.float32)

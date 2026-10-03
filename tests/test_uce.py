@@ -131,7 +131,6 @@ class UCETests(unittest.TestCase):
             checkpoint = torch.load(path, weights_only=True)
             self.assertEqual(checkpoint["method"], "uce")
             self.assertEqual(path.name, "uce_unet.pt")
-            self.assertNotIn("optimizer_state_dict", checkpoint)
             self.assertIsNone(conditioner.weight.grad)
             self.assertFalse((path.parent / "loss_history.jsonl").exists())
             metadata = json.loads((path.parent / "edit.json").read_text())

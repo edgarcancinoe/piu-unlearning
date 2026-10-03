@@ -18,7 +18,7 @@ from torch import nn
 from piu_unlearning.config import WIDConfig, parse_config
 from piu_unlearning.data import PairedImageDataset, create_evaluation_conditions, create_experiment_split, load_image_manifest, load_training_image
 from piu_unlearning.methods import build_method
-from piu_unlearning.methods.wid import WIDContext, prepare_wid_inputs, reconstruct_clean_latents
+from piu_unlearning.methods.wid import WIDContext, check_wid_inputs, prepare_wid_inputs, reconstruct_clean_latents
 from piu_unlearning.models.identity_encoder import IdentityEncoder, IRSE50, load_identity_encoder, preprocess_identity_images
 from piu_unlearning.dataset.images import write_image_manifest
 from piu_unlearning.training.losses import NoisePredictionContext
@@ -180,6 +180,17 @@ class WIDTests(unittest.TestCase):
                 torch.testing.assert_close(inputs.dataset[index]["identity_target"], target[index])
             self.assertEqual(len({tuple(row.tolist()) for row in target}), len(target))
 
+    def test_preflight_checks_inputs_without_computing_targets(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config, split, _ = make_image_fixture(Path(directory))
+            encoder = IdentityEncoder(TinyRecognizer(), "bgr")
+            with patch("piu_unlearning.methods.wid.load_identity_encoder", return_value=encoder) as load, patch.object(encoder, "forward", side_effect=AssertionError("Targets belong to the worker")):
+                check_wid_inputs(split, config)
+            load.assert_called_once_with(config.identity_checkpoint.resolve(), config.identity_channel_order)
+            missing = split.forget_train.indices[0].item()
+            (Path(directory) / "images" / f"{missing:04d}.png").unlink()
+            with self.assertRaises(FileNotFoundError): check_wid_inputs(split, config)
+
     def test_reconstruction_equation(self):
         context = make_wid_context()
         clean, noise = torch.randn(2, 3, 2, 2), torch.randn(2, 3, 2, 2)
@@ -291,7 +302,7 @@ class WIDTests(unittest.TestCase):
             stack.enter_context(patch("piu_unlearning.methods.wid.load_identity_encoder", return_value=IdentityEncoder(TinyRecognizer(), "bgr")))
             result = run_demo(config, split=split)
             self.assertEqual(result.method, "wid")
-            for path in ("config.json", "split.json", "reference.json", "wid_identity.json", "identity_target.pt", "summary.json", "checkpoints/wid_unet.pt", "summary/training_curves.png", "summary/fixed_conditions.png"):
+            for path in ("config.json", "split.json", "before/baseline.json", "reference.json", "wid_identity.json", "identity_target.pt", "summary.json", "checkpoints/wid_unet.pt", "summary/training_curves.png", "summary/fixed_conditions.png"):
                 self.assertTrue((config.output_dir / path).is_file(), path)
 
 

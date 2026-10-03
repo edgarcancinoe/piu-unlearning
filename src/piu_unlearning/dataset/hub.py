@@ -43,6 +43,7 @@ def download_face_models(models_root: Path) -> Path:
 
 def prepare_canonical(output_dir: Path, revision: str = DATASET_REVISION, cache_dir: Path | None = None) -> None:
     """Download the checksummed embeddings, labels, and centroids used in the paper."""
+    if (output_dir / "labels.npy").exists(): raise ValueError(f"Recomputed labels exist in {output_dir}; use a separate directory for paper data")
     from huggingface_hub import hf_hub_download
 
     output_dir.mkdir(parents=True, exist_ok=True)

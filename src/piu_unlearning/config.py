@@ -52,7 +52,10 @@ class RunConfig:
     @property
     def labels_path(self) -> Path:
         paper_labels = self.data_dir / PAPER_LABELS_FILE
-        return paper_labels if paper_labels.is_file() else self.data_dir / "labels.npy"
+        recomputed_labels = self.data_dir / "labels.npy"
+        if paper_labels.is_file() and recomputed_labels.is_file():
+            raise ValueError(f"Paper and recomputed labels coexist in {self.data_dir}; use separate data directories")
+        return paper_labels if paper_labels.is_file() else recomputed_labels
 
     @property
     def centroids_path(self) -> Path: return self.data_dir / "centroids.npy"

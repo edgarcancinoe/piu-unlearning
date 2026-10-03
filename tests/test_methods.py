@@ -17,6 +17,7 @@ from torch.utils.data import DataLoader
 
 from piu_unlearning.config import PIUConfig, parse_config
 from piu_unlearning.data import create_embedding_loaders, create_evaluation_conditions, create_experiment_split
+from piu_unlearning.main import baseline_metadata, check_baseline, run_demo
 from piu_unlearning.methods import build_method
 from piu_unlearning.models.arc2face import select_trainable_layers
 from piu_unlearning.training.losses import GuidedNoiseLoss, LossOutput, NoisePredictionContext
@@ -81,6 +82,26 @@ class ConfigurationTests(unittest.TestCase):
         for arguments in (["--method", "siss", "--use-anchor-overrides"], ["--training-steps", "0"], ["--gradient-accumulation-steps", "0"], ["--evaluation-every", "-1"], ["--preservation-weight", "-1"]):
             with self.subTest(arguments=arguments), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
                 parse_config(["--identity-id", "512", *arguments])
+
+
+class BaselineTests(unittest.TestCase):
+    def test_reuse_requires_matching_conditions_and_generation_settings(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = PIUConfig(identity_id=0, output_dir=Path(directory), num_samples=1)
+            split = make_split(config)
+            conditions = create_evaluation_conditions(split, config)
+            before = config.output_dir / "before"
+            before.mkdir()
+            with patch("piu_unlearning.main.load_arc2face") as load_model:
+                with self.assertRaisesRegex(ValueError, "do not match"): run_demo(replace(config, reuse_baseline=True), split=split)
+                load_model.assert_not_called()
+            (before / "baseline.json").write_text(json.dumps(baseline_metadata(config, conditions)))
+            check_baseline(config, conditions, before)
+            for changed in (replace(config, seed=1), replace(config, guidance_scale=4), replace(config, base_model_revision="other")):
+                with self.subTest(changed=changed), self.assertRaisesRegex(ValueError, "do not match"):
+                    check_baseline(changed, conditions, before)
+            with self.assertRaisesRegex(ValueError, "do not match"):
+                check_baseline(config, replace(conditions, forget_embeddings=conditions.forget_embeddings + 0.01), before)
 
 
 class MethodTests(unittest.TestCase):

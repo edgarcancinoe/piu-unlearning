@@ -72,6 +72,6 @@ python baselines/run_all.py --identity-id 512 --data-dir data/celebahq_512 \
   --use-anchor-overrides --output-dir outputs/comparison_512
 ```
 
-WID resolves the same cached recognition weights during preflight and worker execution; use `--methods piu uce` when real images are unavailable. Shared evaluation settings and deterministic splits do not by themselves reproduce archived experiments.
+WID preflight checks the selected images and recognition weights; the worker computes identity targets once. Use `--methods piu uce` when real images are unavailable. Shared evaluation settings and deterministic splits do not by themselves reproduce archived experiments.
 
 CPU tests cover image pairing/integrity, per-image targets, reconstruction, identity-only gradients, frozen modules, the real IR-SE50 architecture with synthetic weights, checkpointing, plots, and mocked demo/launcher execution. Full Arc2Face/CUDA training and pretrained recognition quality remain unvalidated.

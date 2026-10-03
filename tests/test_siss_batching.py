@@ -110,7 +110,6 @@ class SISSBatchingTests(unittest.TestCase):
         reference, evaluations, final, history = results[0]
         for actual, actual_evaluations, actual_final, actual_history in results[1:]:
             torch.testing.assert_close(actual['unet_state_dict'], reference['unet_state_dict'])
-            torch.testing.assert_close(actual['optimizer_state_dict'], reference['optimizer_state_dict'])
             torch.testing.assert_close(actual['ema_state_dict'], reference['ema_state_dict'])
             torch.testing.assert_close(actual_final, final)
             for (step, weights), (ref_step, ref_weights) in zip(actual_evaluations, evaluations):

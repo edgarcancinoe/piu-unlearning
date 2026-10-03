@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from PIL import Image
 import torch
 import torch.nn.functional as F
 from torch import nn
@@ -29,6 +30,14 @@ class WIDContext:
     noise: NoisePredictionContext
     vae: nn.Module
     identity_encoder: nn.Module | None
+
+
+def check_wid_inputs(split: ExperimentSplit, config: WIDConfig) -> None:
+    paths, _ = load_image_manifest(config)
+    for index in split.forget_train.indices.tolist():
+        with Image.open(paths[index]) as image: image.verify()
+    if config.identity_loss_weight:
+        load_identity_encoder(resolve_identity_checkpoint(config.identity_checkpoint), config.identity_channel_order)
 
 
 def prepare_wid_inputs(split: ExperimentSplit, config: WIDConfig) -> WIDInputs:
