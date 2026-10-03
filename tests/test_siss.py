@@ -93,18 +93,17 @@ class SISSTests(unittest.TestCase):
             expected_loss = (prediction - target).square().mean()
             torch.testing.assert_close(diffusion_loss(context.model, scheduler, clean, cond, noise, steps), expected_loss)
 
-    def test_manifest_uses_only_both_training_partitions(self):
+    def test_manifest_pairs_both_training_partitions(self):
         config = SISSConfig(identity_id=0, device='cpu')
         split = make_split(config)
         paths = [Path(f'/tmp/{i}.png') for i in range(24)]
         with patch('piu_unlearning.methods.siss.load_image_manifest', return_value=(paths, {})) as load:
             inputs = prepare_siss_inputs(split, config)
-        expected = torch.cat([split.forget_train.indices, split.retain_train.indices])
-        torch.testing.assert_close(load.call_args.args[1], expected)
+        load.assert_called_once_with(config)
         self.assertEqual(inputs.forget.paths, [paths[i] for i in split.forget_train.indices])
         self.assertEqual(inputs.retain.paths, [paths[i] for i in split.retain_train.indices])
 
-    def test_missing_images_fail_before_loading_model(self):
+    def test_missing_manifest_fails_before_loading_model(self):
         with tempfile.TemporaryDirectory() as directory:
             config = SISSConfig(identity_id=0, device='cpu', output_dir=Path(directory), num_samples=2)
             with patch('piu_unlearning.main.prepare_siss_inputs', side_effect=FileNotFoundError('missing manifest')), patch('piu_unlearning.main.load_arc2face') as load:
@@ -175,7 +174,7 @@ class SISSTests(unittest.TestCase):
             write_training_curves(path.parent / 'loss_history.jsonl', path.parent / 'ism_history.jsonl', Path(directory) / 'curves.png', 'siss')
             self.assertTrue((Path(directory) / 'curves.png').is_file())
 
-    def test_image_manifest_loads_pairs_and_rejects_changed_files(self):
+    def test_image_manifest_loads_pairs_and_opens_images_on_demand(self):
         from test_wid import make_image_fixture
         with tempfile.TemporaryDirectory() as directory:
             wid, split, _ = make_image_fixture(Path(directory))
@@ -185,4 +184,5 @@ class SISSTests(unittest.TestCase):
             self.assertEqual(next(iter(forget))['pixel_values'].shape, (2, 3, 512, 512))
             self.assertEqual(next(iter(retain))['pixel_values'].shape, (2, 3, 512, 512))
             inputs.retain.paths[0].write_bytes(b'changed')
-            with self.assertRaisesRegex(ValueError, 'Image changed since manifest creation'): prepare_siss_inputs(split, config)
+            prepare_siss_inputs(split, config)
+            with self.assertRaises(OSError): inputs.retain[0]

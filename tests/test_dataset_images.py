@@ -2,13 +2,14 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 from PIL import Image
 
-from piu_unlearning.dataset.images import materialize_images, write_image_manifest
+from piu_unlearning.dataset.images import materialize_images, prepare_dataset_images, write_image_manifest
 from piu_unlearning.config import PAPER_LABELS_FILE
 
 
@@ -49,6 +50,9 @@ class DatasetImageTests(unittest.TestCase):
             self.assertEqual(manifest["version"], 2)
             self.assertEqual(manifest["source"]["row_order"], "dataset_parquet")
             self.assertEqual([row["path"] for row in manifest["rows"]], names)
+            (images / names[0]).unlink()
+            with patch("piu_unlearning.dataset.images.download_dataset", side_effect=AssertionError("unexpected download")):
+                self.assertEqual(prepare_dataset_images(data, images), result)
 
 
 if __name__ == "__main__":

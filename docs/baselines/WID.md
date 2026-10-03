@@ -26,7 +26,7 @@ For recomputed embeddings, `piu-recompute-data` already writes `file_names.txt` 
 piu-prepare-images --data-dir data/celebahq_512_recomputed --download-images
 ```
 
-Use the same dataset revision used for extraction if it was overridden. The manifest checks row order, image integrity, and embedding/label file hashes without extracting faces again. For published embeddings, dataset order is provenance, not an independent proof that every stored embedding matches its image. It does not replace embeddings or recluster identities. WID rechecks the hashes and readability of images it uses before training. `--image-root` on the demo can relocate an unchanged image directory. Embedding-only methods do not need image preparation.
+Use the same dataset revision used for extraction if it was overridden. Preparation records row order and file hashes without extracting faces again; runs do not recheck every image. For published embeddings, dataset order is provenance, not an independent proof that every stored embedding matches its image. It does not replace embeddings or recluster identities. WID opens the forget-training images to compute its identity targets. `--image-root` on the demo can relocate the image directory. Embedding-only methods do not need image preparation.
 
 ## Run
 

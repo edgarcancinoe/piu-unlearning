@@ -37,7 +37,7 @@ def prepare_wid_inputs(split: ExperimentSplit, config: WIDConfig) -> WIDInputs:
     from dataclasses import replace
 
     reference = proximity_reference(split, replace(config, device="cpu"))
-    paths, manifest = load_image_manifest(config, split.forget_train.indices)
+    paths, manifest = load_image_manifest(config)
     dataset = PairedImageDataset(split.forget_train, paths)
     metadata = {"manifest": manifest, "target_mode": "original_images" if config.identity_loss_weight else "disabled", "forget_indices": split.forget_train.indices.tolist(), "anchor_id": reference.identity_id}
     if not config.identity_loss_weight: return WIDInputs(dataset, reference, None, None, metadata)

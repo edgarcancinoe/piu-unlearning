@@ -141,10 +141,10 @@ class WIDTests(unittest.TestCase):
         self.assertGreater(float(images.grad.abs().sum()), 0)
         self.assertTrue(all(parameter.grad is None for parameter in model.parameters()))
 
-    def test_manifest_dataset_pairing_and_tampering(self):
+    def test_manifest_dataset_pairing_and_lazy_image_loading(self):
         with tempfile.TemporaryDirectory() as directory:
             config, split, manifest = make_image_fixture(Path(directory))
-            paths, metadata = load_image_manifest(config, split.forget_train.indices)
+            paths, metadata = load_image_manifest(config)
             dataset = PairedImageDataset(split.forget_train, paths)
             self.assertEqual(len(dataset), len(split.forget_train.indices))
             batch = dataset[0]
@@ -156,10 +156,11 @@ class WIDTests(unittest.TestCase):
             index = split.forget_train.indices[0].item()
             self.assertAlmostEqual(float(batch["pixel_values"][0, 0, 0]), index / 127.5 - 1, places=6)
             self.assertFalse(set(dataset.paths) & {paths[index] for index in split.forget_validation.indices.tolist()})
-            Image.new("RGB", (20, 24), "white").save(dataset.paths[0])
-            with self.assertRaisesRegex(ValueError, "changed"): load_image_manifest(config, split.forget_train.indices)
+            dataset.paths[0].write_bytes(b"changed")
+            load_image_manifest(config)
+            with self.assertRaises(OSError): dataset[0]
             np.save(config.labels_path, np.zeros(24, dtype=np.int64))
-            with self.assertRaisesRegex(ValueError, "labels.npy"): load_image_manifest(config, split.forget_train.indices)
+            with self.assertRaisesRegex(ValueError, "labels.npy"): load_image_manifest(config)
 
     def test_target_uses_each_original_forget_training_image(self):
         with tempfile.TemporaryDirectory() as directory:

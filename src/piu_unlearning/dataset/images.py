@@ -84,7 +84,6 @@ def prepare_dataset_images(data_dir: Path, image_root: Path | None = None, manif
             and metadata.get("labels_sha256") == sha256(label_path)
             and metadata.get("source_paths_sha256") == sha256(image_paths)
             and [row["path"] for row in metadata["rows"]] == names
-            and all((image_root / name).is_file() for name in names)
         ):
             return manifest
     names = image_paths.read_text(encoding="utf-8").splitlines() if image_paths.is_file() else None

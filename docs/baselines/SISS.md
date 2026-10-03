@@ -12,7 +12,7 @@ SISS needs a row-aligned `image_manifest.json`. The demo downloads the hosted im
 piu-demo --method siss --identity-id 512 --data-dir data/celebahq_512
 ```
 
-Use `--image-manifest` or `--image-root` to override the manifest or image directory. Missing or changed images fail before diffusion model loading. Validation images are excluded from training.
+Use `--image-manifest` or `--image-root` to override the manifest or image directory. Images are opened when sampled for training; missing or corrupt files fail then. Validation images are excluded from training.
 
 ## Training
 

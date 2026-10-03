@@ -28,8 +28,7 @@ class SISSContext:
 
 
 def prepare_siss_inputs(split: ExperimentSplit, config: SISSConfig) -> SISSInputs:
-    required = torch.cat([split.forget_train.indices, split.retain_train.indices])
-    paths, manifest = load_image_manifest(config, required)
+    paths, manifest = load_image_manifest(config)
     return SISSInputs(PairedImageDataset(split.forget_train, paths), PairedImageDataset(split.retain_train, paths), {"manifest": manifest, "forget_indices": split.forget_train.indices.tolist(), "retain_indices": split.retain_train.indices.tolist()})
 
 

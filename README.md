@@ -55,8 +55,6 @@ Download the CelebA-HQ images from the same dataset, extract ArcFace embeddings,
 piu-recompute-data --output-dir data/celebahq_512_recomputed --device cuda
 ```
 
-This option uses scikit-learn for DBSCAN. If it is not installed, add it with `python -m pip install scikit-learn==1.7.2`.
-
 For SISS or WID, materialize the same dataset images and check their order against the recomputed `file_names.txt`:
 
 ```bash

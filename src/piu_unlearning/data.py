@@ -10,7 +10,6 @@ import torch
 import torch.nn.functional as F
 from PIL import Image
 from torch.utils.data import DataLoader, Dataset, RandomSampler
-from tqdm.auto import tqdm
 
 if TYPE_CHECKING:
     from piu_unlearning.config import PIUConfig, RunConfig, TrainingConfig
@@ -210,7 +209,7 @@ class PairedImageDataset(Dataset):
         return batch
 
 
-def load_image_manifest(config, required_indices: torch.Tensor) -> tuple[list[Path], dict]:
+def load_image_manifest(config) -> tuple[list[Path], dict]:
     from piu_unlearning.dataset.hub import sha256
 
     path = config.image_manifest or config.data_dir / "image_manifest.json"
@@ -222,9 +221,6 @@ def load_image_manifest(config, required_indices: torch.Tensor) -> tuple[list[Pa
     root = config.image_root or path.parent / manifest["image_root"]
     if any(not row["path"] or Path(row["path"]).name != row["path"] for row in rows): raise ValueError("Manifest image paths must be plain file names")
     paths = [root / row["path"] for row in rows]
-    for index in tqdm(required_indices.tolist(), desc="Loading training images", unit="image"):
-        if sha256(paths[index]) != rows[index]["sha256"]: raise ValueError(f"Image changed since manifest creation: {paths[index]}")
-        with Image.open(paths[index]) as image: image.verify()
     return paths, {"path": str(path.resolve()), "sha256": sha256(path), "image_root": str(root.resolve()), "source": manifest.get("source")}
 
 
