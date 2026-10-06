@@ -9,7 +9,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 from PIL import Image
-from torch.utils.data import DataLoader, Dataset, RandomSampler
+from torch.utils.data import DataLoader, Dataset, RandomSampler, Sampler
 
 if TYPE_CHECKING:
     from piu_unlearning.config import PIUConfig, RunConfig, TrainingConfig
@@ -63,6 +63,25 @@ class DirichletEmbeddingDataset(Dataset[torch.Tensor]):
         source_indices = torch.randperm(len(self))[:num_sources]
         weights = torch.distributions.Dirichlet(torch.ones(num_sources)).sample()
         return F.normalize((self.embeddings[source_indices] * weights.unsqueeze(1)).sum(dim=0), dim=0)
+
+
+class EpochShuffleSampler(Sampler[int]):
+    """Visit every row once per seeded epoch, including across batch boundaries."""
+
+    def __init__(self, dataset: Dataset | torch.Tensor, num_samples: int, seed: int) -> None:
+        if not len(dataset): raise ValueError("Training dataset is empty")
+        self.dataset, self.num_samples, self.seed = dataset, num_samples, seed
+
+    def __iter__(self):
+        remaining, epoch = self.num_samples, 0
+        while remaining:
+            order = torch.randperm(len(self.dataset), generator=torch.Generator().manual_seed(self.seed + epoch)).tolist()
+            take = min(remaining, len(order))
+            yield from order[:take]
+            remaining -= take
+            epoch += 1
+
+    def __len__(self) -> int: return self.num_samples
 
 
 def load_prepared_data(config: RunConfig) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -173,12 +192,14 @@ def create_embedding_loaders(split: ExperimentSplit, config: PIUConfig) -> tuple
 def create_training_loaders(forget_dataset: Dataset | torch.Tensor, retain_embeddings: Dataset | torch.Tensor, config: TrainingConfig) -> tuple[DataLoader, DataLoader | None]:
     batch_size = config.gradient_batch_size if config.method == "siss" else config.batch_size
     num_samples = config.training_steps * config.gradient_accumulation_steps * config.batch_size
-    forget_sampler = RandomSampler(forget_dataset, replacement=True, num_samples=num_samples, generator=torch.Generator().manual_seed(config.seed))
+    if config.method == "siss": forget_sampler = EpochShuffleSampler(forget_dataset, num_samples, config.seed + 1)
+    else: forget_sampler = RandomSampler(forget_dataset, replacement=True, num_samples=num_samples, generator=torch.Generator().manual_seed(config.seed))
     forget_loader = DataLoader(forget_dataset, batch_size=batch_size, sampler=forget_sampler)
     retain_loader = None
     if config.method == "siss" or config.preservation_weight > 0:
         if not len(retain_embeddings): raise ValueError("Preservation requires nonempty retain training data")
-        retain_sampler = RandomSampler(retain_embeddings, replacement=True, num_samples=num_samples, generator=torch.Generator().manual_seed(config.seed + 1))
+        if config.method == "siss": retain_sampler = EpochShuffleSampler(retain_embeddings, num_samples, config.seed)
+        else: retain_sampler = RandomSampler(retain_embeddings, replacement=True, num_samples=num_samples, generator=torch.Generator().manual_seed(config.seed + 1))
         retain_loader = DataLoader(retain_embeddings, batch_size=batch_size, sampler=retain_sampler)
     return forget_loader, retain_loader
 

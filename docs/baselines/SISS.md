@@ -12,11 +12,13 @@ SISS needs a row-aligned `image_manifest.json`. The demo downloads the hosted im
 piu-demo --method siss --identity-id 512 --data-dir data/celebahq_512
 ```
 
+To use the same shared split as a paper-anchor comparison without running other methods, use `python baselines/run_all.py --methods siss --use-anchor-overrides ...`. The override affects the split, not SISS training.
+
 Use `--image-manifest` or `--image-root` to override the manifest or image directory. Images are opened when sampled for training; missing or corrupt files fail then. Validation images are excluded from training.
 
 ## Training
 
-Defaults are 60 optimizer updates, GPU microbatch 16 with 4 accumulation steps, and a normalization batch of 16 (effective batch 64 for each branch), AdamW at `5e-6`, zero weight decay, beta `0.1`, and full U-Net training. Learning rate is constant; the accumulated gradient is clipped to norm 1, matching the legacy runner. VAE and identity-conditioning encoder remain frozen. EMA is enabled for intermediate and final evaluation, matching the legacy runner; use `--no-use-ema` to disable it. Checkpoints retain raw U-Net weights and the separate `ema_state_dict`, but not optimizer state.
+Defaults are 60 optimizer updates, GPU microbatch 16 with 4 accumulation steps, and a normalization batch of 16 (effective batch 64 for each branch), AdamW at `5e-6`, zero weight decay, beta `0.1`, and full U-Net training. SISS trains on at most 1,000 retained identities (`--num-preserve-ids 0` uses all), with retain and forget images shuffled once per epoch, as in the legacy run. Learning rate is constant; the accumulated gradient is clipped to norm 1. VAE and identity-conditioning encoder remain frozen. EMA is enabled for intermediate and final evaluation; use `--no-use-ema` to disable it. Checkpoints retain raw U-Net weights and the separate `ema_state_dict`, but not optimizer state.
 
 Both branches encode real images into VAE latents and condition on their corresponding stored identity embeddings. Each paired normalization batch shares noise and timesteps. VAE encoding, conditioning, and U-Net forward/backward passes are split into GPU microbatches. Raw gradients are averaged separately for each branch before computing the ratio. The update is:
 
@@ -51,7 +53,7 @@ This is the gradient-based Arc2Face adaptation reported in PIU, not a claim to r
 
 ## Outputs and comparison
 
-Results go to `outputs/siss_demo`. Outputs include resolved configuration, split, `siss_data.json` with manifest hashes and training indices, `checkpoints/siss_unet.pt`, before/after images, metrics, and training curves. Logs record forget/retain diffusion losses, gradient norms, and the adaptive scale. The reported total loss is `retain_loss - scale * forget_loss`; the optimizer uses the explicitly combined gradients.
+Results go to `outputs/siss_demo`. Outputs include resolved configuration, split, `siss_data.json` with manifest hashes and the selected training rows and identities, `checkpoints/siss_unet.pt`, before/after images, metrics, and training curves. Logs record forget/retain diffusion losses, gradient norms, and the adaptive scale. The reported total loss is `retain_loss - scale * forget_loss`; the optimizer uses the explicitly combined gradients.
 
 ISM evaluation runs every 50 optimizer updates by default (`--evaluation-every 0` disables intermediate evaluation). Final evaluation still runs after training. Generation uses the shared 25 denoising steps and guidance scale 3.
 

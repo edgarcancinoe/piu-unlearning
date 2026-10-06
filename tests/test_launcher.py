@@ -45,8 +45,9 @@ class LauncherTests(unittest.TestCase):
             with self.subTest(option=option), self.assertRaises(ValueError): launcher.build_jobs(args)
         with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
             launcher.parse_args(["--identity-id", "512", "--methods", "piu", "piu"])
-        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
-            launcher.parse_args(["--identity-id", "512", "--methods", "siss", "--use-anchor-overrides"])
+        siss_only = launcher.build_jobs(launcher.parse_args(["--identity-id", "512", "--methods", "siss", "--use-anchor-overrides"]))[0]
+        self.assertIsNone(parse_config(siss_only["args"]).anchor_overrides)
+        self.assertIsNotNone(parse_config(siss_only["split_args"]).anchor_overrides)
 
     def test_dry_run_does_not_load_data_or_write(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -132,7 +133,7 @@ class LauncherTests(unittest.TestCase):
 
     def test_siss_preflight_runs_without_anchor_and_before_any_worker(self):
         with tempfile.TemporaryDirectory() as directory:
-            args = launcher.parse_args(["--identity-id", "0", "--methods", "siss", "--output-dir", str(Path(directory) / "run")])
+            args = launcher.parse_args(["--identity-id", "0", "--methods", "siss", "--use-anchor-overrides", "--output-dir", str(Path(directory) / "run")])
             with patch.object(launcher, "prepare_for_demo"), patch.object(launcher, "prepare_split", return_value=(object(), object())), patch.object(launcher, "select_anchor_embedding", side_effect=AssertionError("No anchor needed")), patch.object(launcher, "prepare_siss_inputs", side_effect=FileNotFoundError("missing SISS images")), patch.object(launcher, "run_process") as process:
                 with self.assertRaisesRegex(FileNotFoundError, "missing SISS images"): launcher.launch(args)
                 process.assert_not_called()

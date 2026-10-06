@@ -117,6 +117,7 @@ class SISSConfig(TrainingConfig):
     use_ema: bool = True
     gradient_batch_size: int = 16
     gradient_checkpointing: bool = True
+    num_preserve_ids: int = 1000
     image_manifest: Path | None = None
     image_root: Path | None = None
 
@@ -125,6 +126,7 @@ class SISSConfig(TrainingConfig):
         if not 0 <= self.beta < float("inf"): raise ValueError("SISS beta must be finite and nonnegative")
         if self.anchor_overrides is not None: raise ValueError("SISS does not use anchors")
         if self.gradient_batch_size < 1: raise ValueError("gradient_batch_size must be positive")
+        if self.num_preserve_ids < 0: raise ValueError("num_preserve_ids must be nonnegative")
         if self.gradient_batch_size % self.batch_size: raise ValueError("SISS batch_size must divide gradient_batch_size")
         if self.batch_size * self.gradient_accumulation_steps % self.gradient_batch_size: raise ValueError("SISS effective batch must be a multiple of gradient_batch_size")
 
@@ -224,6 +226,7 @@ def parse_config(argv: list[str] | None = None) -> PIUConfig | SISSConfig | UCEC
         parser.add_argument("--evaluation-every", type=int, default=config_type.evaluation_every, help="Run ISM evaluation every N optimizer steps; 0 disables it.")
     if method_args.method == "siss":
         parser.add_argument("--beta", type=float, default=SISSConfig.beta, help="Forget gradient norm relative to retain gradient norm.")
+        parser.add_argument("--num-preserve-ids", type=int, default=SISSConfig.num_preserve_ids, help="Retain-training identities; 0 uses all.")
         parser.add_argument("--use-ema", action=argparse.BooleanOptionalAction, default=SISSConfig.use_ema)
         parser.add_argument("--gradient-batch-size", type=int, default=SISSConfig.gradient_batch_size, help="Examples per branch used to compute each SISS gradient norm ratio; independent of GPU batch size.")
         parser.add_argument("--gradient-checkpointing", action=argparse.BooleanOptionalAction, default=SISSConfig.gradient_checkpointing)

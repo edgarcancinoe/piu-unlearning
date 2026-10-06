@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import random
 from dataclasses import dataclass
 
 import torch
@@ -7,7 +8,7 @@ import torch.nn.functional as F
 from torch import nn
 
 from piu_unlearning.config import SISSConfig
-from piu_unlearning.data import ExperimentSplit, PairedImageDataset, load_image_manifest
+from piu_unlearning.data import EmbeddingPartition, ExperimentSplit, PairedImageDataset, load_image_manifest
 from piu_unlearning.training.losses import LossOutput
 
 
@@ -29,7 +30,14 @@ class SISSContext:
 
 def prepare_siss_inputs(split: ExperimentSplit, config: SISSConfig) -> SISSInputs:
     paths, manifest = load_image_manifest(config)
-    return SISSInputs(PairedImageDataset(split.forget_train, paths), PairedImageDataset(split.retain_train, paths), {"manifest": manifest, "forget_indices": split.forget_train.indices.tolist(), "retain_indices": split.retain_train.indices.tolist()})
+    retain = split.retain_train
+    retain_ids = torch.unique(retain.labels).tolist()
+    if config.num_preserve_ids and len(retain_ids) > config.num_preserve_ids:
+        random.Random(42).shuffle(retain_ids)
+        selected = torch.isin(retain.labels, torch.tensor(retain_ids[:config.num_preserve_ids], dtype=retain.labels.dtype))
+        retain = EmbeddingPartition(retain.embeddings[selected], retain.labels[selected], retain.indices[selected])
+    metadata = {"manifest": manifest, "forget_indices": split.forget_train.indices.tolist(), "retain_indices": retain.indices.tolist(), "retain_identity_ids": torch.unique(retain.labels).tolist(), "sampler": "epoch_shuffle"}
+    return SISSInputs(PairedImageDataset(split.forget_train, paths), PairedImageDataset(retain, paths), metadata)
 
 
 def diffusion_loss(model, scheduler, clean, conditioning, noise, timesteps):

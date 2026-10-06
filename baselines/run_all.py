@@ -46,7 +46,6 @@ def parse_args(argv=None):
     for method in METHODS: parser.add_argument(f"--{method}-args", default="", help=f"Quoted method-specific piu-demo options for {method.upper()}.")
     args = parser.parse_args(argv)
     if len(set(args.methods)) != len(args.methods): parser.error("Each method must appear only once")
-    if args.methods == ["siss"] and args.use_anchor_overrides: parser.error("--use-anchor-overrides is not supported for SISS-only runs")
     args.output_dir, args.data_dir = args.output_dir.resolve(), args.data_dir.resolve()
     return args
 

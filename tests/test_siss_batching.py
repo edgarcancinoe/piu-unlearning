@@ -44,6 +44,14 @@ class SISSBatchingTests(unittest.TestCase):
         generator = torch.Generator().manual_seed(31)
         return [[{'pixel_values': torch.randn(1, 2, 2, generator=generator) + offset, 'face_embs': torch.randn(3, generator=generator)} for _ in range(21)] for offset in (0, 2)]
 
+    def test_siss_sampler_shuffles_each_epoch_without_replacement(self):
+        config = SISSConfig(identity_id=0, batch_size=2, gradient_batch_size=2, gradient_accumulation_steps=2, training_steps=3)
+        loaders = create_training_loaders(torch.arange(5), torch.arange(5), config)
+        for loader, seed in zip(loaders, (config.seed + 1, config.seed)):
+            expected = [index for epoch in range(3) for index in torch.randperm(5, generator=torch.Generator().manual_seed(seed + epoch)).tolist()]
+            self.assertEqual(list(loader.sampler), expected[:12])
+            self.assertEqual(len(loader), 6)
+
     def test_config_rejects_incomplete_groups(self):
         for kwargs in ({'gradient_batch_size': 0}, {'batch_size': 32}, {'batch_size': 3}, {'batch_size': 4, 'gradient_accumulation_steps': 3}):
             with self.subTest(kwargs=kwargs), self.assertRaises(ValueError): SISSConfig(identity_id=0, **kwargs)

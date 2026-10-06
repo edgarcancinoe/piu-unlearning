@@ -1,6 +1,7 @@
 import contextlib
 import io
 import json
+import random
 import tempfile
 import unittest
 from pathlib import Path
@@ -11,7 +12,7 @@ import torch
 from torch import nn
 
 from piu_unlearning.config import SISSConfig, parse_config
-from piu_unlearning.data import create_training_loaders, create_evaluation_conditions
+from piu_unlearning.data import EmbeddingPartition, create_training_loaders, create_evaluation_conditions
 from piu_unlearning.main import unlearn_identity, run_demo
 from piu_unlearning.methods import build_method
 from piu_unlearning.methods.siss import SISSContext, SISSInputs, combine_gradients, diffusion_loss, prepare_siss_inputs
@@ -42,7 +43,8 @@ class SISSTests(unittest.TestCase):
         self.assertEqual(config, SISSConfig(identity_id=512))
         self.assertEqual((config.training_steps, config.batch_size, config.gradient_accumulation_steps), (60, 16, 4))
         self.assertEqual((config.optimizer, config.learning_rate, config.weight_decay, config.beta, config.train_mode), ("adamw", 5e-6, 0, 0.1, "full"))
-        for option in (["--reference-mode", "zero_uncond"], ["--preservation-weight", "0"], ["--use-anchor-overrides"], ["--beta", "nan"], ["--beta", "-1"]):
+        self.assertEqual(config.num_preserve_ids, 1000)
+        for option in (["--reference-mode", "zero_uncond"], ["--preservation-weight", "0"], ["--use-anchor-overrides"], ["--beta", "nan"], ["--beta", "-1"], ["--num-preserve-ids", "-1"]):
             with self.subTest(option=option), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
                 parse_config(["--method", "siss", "--identity-id", "512", *option])
         override = parse_config(["--method", "siss", "--identity-id", "512", "--beta", "0.2", "--image-root", "/tmp/images"])
@@ -102,6 +104,23 @@ class SISSTests(unittest.TestCase):
         load.assert_called_once_with(config)
         self.assertEqual(inputs.forget.paths, [paths[i] for i in split.forget_train.indices])
         self.assertEqual(inputs.retain.paths, [paths[i] for i in split.retain_train.indices])
+
+    def test_retain_pool_matches_legacy_seeded_cap(self):
+        retain = EmbeddingPartition(torch.zeros(1003, 3), torch.arange(1003), torch.arange(1003))
+        forget = EmbeddingPartition(torch.zeros(1, 3), torch.zeros(1, dtype=torch.long), torch.tensor([1003]))
+        split = SimpleNamespace(forget_train=forget, retain_train=retain)
+        paths = [Path(f'/tmp/{index}.png') for index in range(1004)]
+        ids = list(range(1003))
+        random.Random(42).shuffle(ids)
+        expected = sorted(ids[:1000])
+        with patch('piu_unlearning.methods.siss.load_image_manifest', return_value=(paths, {})):
+            inputs = prepare_siss_inputs(split, SISSConfig(identity_id=0))
+            all_inputs = prepare_siss_inputs(split, SISSConfig(identity_id=0, num_preserve_ids=0))
+        self.assertEqual(inputs.metadata['retain_identity_ids'], expected)
+        self.assertEqual(inputs.metadata['retain_indices'], expected)
+        self.assertEqual(inputs.retain.paths, [paths[index] for index in expected])
+        self.assertEqual(inputs.metadata['sampler'], 'epoch_shuffle')
+        self.assertEqual(len(all_inputs.retain), 1003)
 
     def test_missing_manifest_fails_before_loading_model(self):
         with tempfile.TemporaryDirectory() as directory:
