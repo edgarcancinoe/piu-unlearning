@@ -57,6 +57,7 @@ def build_jobs(args):
     anchor = ["--proximity-threshold", str(args.proximity_threshold), "--anchor-tolerance", str(args.anchor_tolerance)]
     if args.use_anchor_overrides: anchor.append("--use-anchor-overrides")
     split_args = [*common, *anchor, "--output-dir", str(args.output_dir)]
+    parse_config(split_args)  # SISS-only runs still apply anchor overrides to the shared split.
     jobs = []
     for index, method in enumerate(args.methods):
         command = ["--method", method, *common, "--output-dir", str(args.output_dir / method)]

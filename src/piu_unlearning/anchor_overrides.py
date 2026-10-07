@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+# To be used for reproducing the paper's results, using the provided dataset and embeddings.
+# These overrides were randomly picked, are not necesarily optimal, and may be arbitrary (as to ensure gender and phenotype diversity).
+
+# Anchor overrides ara available for ArcFace proximity of [0,0.1,0.15,0.2,0.25,0.3] for 10 identities.
+# Arc2Face proximity of [0.2] is extended to 100 identities.
 
 CELEBAHQ_512_ANCHOR_OVERRIDES: dict[int, dict[float, int]] = {
     512: {0.0: 2083, 0.1: 3692, 0.15: 2653, 0.2: 3410, 0.25: 3994, 0.3: 2309},

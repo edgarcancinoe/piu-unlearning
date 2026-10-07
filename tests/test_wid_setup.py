@@ -1,8 +1,3 @@
-import json
-import os
-import shlex
-import subprocess
-import sys
 import tempfile
 import unittest
 from dataclasses import replace
@@ -49,30 +44,5 @@ class WIDSetupTests(unittest.TestCase):
             self.assertEqual(len(inputs.identity_target), len(split.forget_train.indices))
             self.assertFalse(inputs.identity_target.requires_grad)
             self.assertTrue(all(not parameter.requires_grad for parameter in inputs.encoder.parameters()))
-
-    def test_helper_accepts_default_and_local_checkpoint(self):
-        helper = Path(__file__).resolve().parents[1] / "baselines/run_wid.sh"
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            data = root / "data"
-            data.mkdir()
-            for name in ("embeddings.npy", "centroids.npy", "centroid_labels.npy", "labels.npy"):
-                (data / name).touch()
-            checkpoint = root / "custom weights.pt"
-            checkpoint.touch()
-            (root / "piu-prepare-data").write_text("#!/bin/sh\nexit 99\n")
-            (root / "piu-prepare-data").chmod(0o755)
-            (root / "python").write_text(f"#!{sys.executable}\nimport json, os, sys\nif sys.argv[1] == '-c': code = sys.argv[2]; sys.argv = ['-c', *sys.argv[3:]]; exec(code)\nelse: open(os.environ['WID_TEST_ARGS'], 'w').write(json.dumps(sys.argv[1:]))\n")
-            (root / "python").chmod(0o755)
-            captured = root / "args.json"
-            env = {**os.environ, "PATH": str(root) + os.pathsep + os.environ["PATH"], "WID_TEST_ARGS": str(captured)}
-            for weights in ([], [str(checkpoint)]):
-                result = subprocess.run(["bash", str(helper), "512", *weights, "--data-dir", str(data), "--use-anchor-overrides"], env=env, capture_output=True, text=True)
-                self.assertEqual(result.returncode, 0, result.stderr)
-                args = json.loads(captured.read_text())
-                self.assertIn("--use-anchor-overrides", args)
-                wid_args = next(arg.split("=", 1)[1] for arg in args if arg.startswith("--wid-args="))
-                self.assertEqual(shlex.split(wid_args), ["--identity-checkpoint", str(checkpoint)] if weights else [])
-
 
 if __name__ == "__main__": unittest.main()

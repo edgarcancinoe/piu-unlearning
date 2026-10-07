@@ -252,13 +252,18 @@ def select_anchor_embedding(split: ExperimentSplit, config: RunConfig) -> tuple[
     retain_labels = torch.unique(labels)
     retain_centroids = torch.stack([F.normalize(embeddings[labels == identity].mean(dim=0), dim=0) for identity in retain_labels])
     similarities = retain_centroids @ split.forget_centroid.squeeze(0)
-    candidate_indices = torch.where(torch.abs(similarities - config.proximity_threshold) < config.anchor_tolerance)[0]
-    if candidate_indices.numel() == 0:
-        raise ValueError(f"No anchor identity satisfies |similarity - {config.proximity_threshold}| < {config.anchor_tolerance}.")
+    in_band = torch.abs(similarities - config.proximity_threshold) < config.anchor_tolerance
     if config.anchor_overrides is not None:
         anchor_id = config.anchor_overrides[config.identity_id][config.proximity_threshold]
-        selected_index = torch.where(retain_labels == anchor_id)[0].item()
+        matches = torch.where(retain_labels == anchor_id)[0]
+        if not matches.numel(): raise ValueError(f"Recorded anchor {anchor_id} is not a retain-training identity; omit --use-anchor-overrides for recomputed data")
+        selected_index = matches.item()
+        if not in_band[selected_index]:
+            raise ValueError(f"Recorded anchor {anchor_id} has similarity {float(similarities[selected_index]):.4f}, outside |similarity - {config.proximity_threshold}| < {config.anchor_tolerance}")
     else:
+        candidate_indices = torch.where(in_band)[0]
+        if candidate_indices.numel() == 0:
+            raise ValueError(f"No anchor identity satisfies |similarity - {config.proximity_threshold}| < {config.anchor_tolerance}.")
         selected_index = candidate_indices[torch.randint(candidate_indices.numel(), (), generator=torch.Generator().manual_seed(config.seed))].item()
         anchor_id = int(retain_labels[selected_index])
     return retain_centroids[selected_index], int(anchor_id), float(similarities[selected_index])

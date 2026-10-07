@@ -16,7 +16,7 @@ from torch import nn
 from torch.utils.data import DataLoader
 
 from piu_unlearning.config import PIUConfig, parse_config
-from piu_unlearning.data import create_embedding_loaders, create_evaluation_conditions, create_experiment_split
+from piu_unlearning.data import EmbeddingPartition, ExperimentSplit, create_embedding_loaders, create_evaluation_conditions, create_experiment_split, select_anchor_embedding
 from piu_unlearning.main import baseline_metadata, check_baseline, run_demo
 from piu_unlearning.methods import build_method
 from piu_unlearning.models.arc2face import select_trainable_layers
@@ -82,6 +82,35 @@ class ConfigurationTests(unittest.TestCase):
         for arguments in (["--method", "siss", "--use-anchor-overrides"], ["--training-steps", "0"], ["--gradient-accumulation-steps", "0"], ["--evaluation-every", "-1"], ["--preservation-weight", "-1"]):
             with self.subTest(arguments=arguments), contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
                 parse_config(["--identity-id", "512", *arguments])
+
+    def test_anchor_overrides_require_a_recorded_pair(self):
+        for arguments in (["--identity-id", "42", "--proximity-threshold", "0.1"], ["--identity-id", "7"]):
+            with self.subTest(arguments=arguments), contextlib.redirect_stderr(io.StringIO()) as stderr, self.assertRaises(SystemExit):
+                parse_config([*arguments, "--use-anchor-overrides"])
+            self.assertIn("No recorded anchor", stderr.getvalue())
+        self.assertEqual(parse_config(["--identity-id", "42", "--use-anchor-overrides"]).proximity_threshold, 0.2)
+
+
+def make_anchor_split():
+    """Forget identity 0 at [1, 0, 0]; retain identity 1 at similarity 0.2 and identity 2 at 0.5."""
+    retain = torch.tensor([[0.2, 0.96 ** 0.5, 0.0], [0.2, 0.96 ** 0.5, 0.0], [0.5, 0.0, 0.75 ** 0.5], [0.5, 0.0, 0.75 ** 0.5]])
+    empty = EmbeddingPartition(torch.empty(0, 3), torch.empty(0, dtype=torch.long), torch.empty(0, dtype=torch.long))
+    retain_train = EmbeddingPartition(retain, torch.tensor([1, 1, 2, 2]), torch.arange(4))
+    return ExperimentSplit(0, empty, empty, retain_train, empty, torch.eye(3), torch.arange(3))
+
+
+class AnchorSelectionTests(unittest.TestCase):
+    def test_random_selection_uses_proximity_band(self):
+        embedding, anchor_id, similarity = select_anchor_embedding(make_anchor_split(), PIUConfig(identity_id=0))
+        self.assertEqual(anchor_id, 1)
+        self.assertAlmostEqual(similarity, 0.2, places=5)
+        self.assertTrue(torch.allclose(embedding, make_anchor_split().retain_train.embeddings[0]))
+        with self.assertRaisesRegex(ValueError, "No anchor identity"): select_anchor_embedding(make_anchor_split(), PIUConfig(identity_id=0, proximity_threshold=0.9))
+
+    def test_override_is_used_only_inside_band(self):
+        self.assertEqual(select_anchor_embedding(make_anchor_split(), PIUConfig(identity_id=0, anchor_overrides={0: {0.2: 1}}))[1], 1)
+        with self.assertRaisesRegex(ValueError, "Recorded anchor 2 has similarity 0.5000"): select_anchor_embedding(make_anchor_split(), PIUConfig(identity_id=0, anchor_overrides={0: {0.2: 2}}))
+        with self.assertRaisesRegex(ValueError, "Recorded anchor 9 is not a retain-training identity"): select_anchor_embedding(make_anchor_split(), PIUConfig(identity_id=0, anchor_overrides={0: {0.2: 9}}))
 
 
 class BaselineTests(unittest.TestCase):

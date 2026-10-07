@@ -45,6 +45,8 @@ class RunConfig:
             if getattr(self, name) < 1: raise ValueError(f"{name} must be positive")
         for ratio in (self.forget_validation_ratio, self.retain_validation_ratio):
             if not 0 < ratio < 1: raise ValueError("Validation ratios must be between zero and one")
+        if self.anchor_overrides is not None and self.proximity_threshold not in self.anchor_overrides.get(self.identity_id, {}):
+            raise ValueError(f"No recorded anchor for identity {self.identity_id} at proximity threshold {self.proximity_threshold}; omit --use-anchor-overrides")
 
     @property
     def embeddings_path(self) -> Path: return self.data_dir / "embeddings.npy"
